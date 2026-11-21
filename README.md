@@ -91,10 +91,10 @@ add `"dms": true` to play in DMs too. The quiz needs:
   quiz, and at most 2 more when some questions come back unusable. Keep
   `max_tokens` at or above `QUIZ_MAX_TOKENS` (3000 by default); the bot caps
   each answer at it;
-- `post`, for each answer and the next question, and the results. The bot
-  drops a post over the chat's post `rate` for good, and a reveal it drops
-  holds the next question, so the quiz asks for no reactions, which take
-  from the same budget: one post per question fits the default rate;
+- `post`, for each question, its answer (a reply to the question) and the
+  results. The bot drops a post over the chat's post `rate` for good, so the
+  quiz asks for no reactions, which take from the same budget: two posts
+  per question fit the default rate;
 - `watch`, to read the replies. A quiz is at most 10 questions of 2 minutes,
   and never over 30 minutes, so the default `watch_max` of 1h is enough.
 
@@ -106,15 +106,12 @@ one quiz at a time: a `/quiz` in a second chat meanwhile waits for it. The
 bot works on a request the quiz gave up on for up to 2 minutes, and the
 next quiz waits for that too, or is told to try again in a minute.
 
-The quiz keeps its own files in `QUIZ_STATE_DIR`, which you create, writable
-by the bot's user, and set in `/etc/signalbot.env`:
-
-- **systemd:** in a drop-in (`sudo systemctl edit signalbot`), add
-  `StateDirectory=quiz` (the unit's `DynamicUser=` makes it and owns it),
-  and set `QUIZ_STATE_DIR=/var/lib/quiz`.
-- **Docker:** `sudo install -d -o 65532 -g 65532 -m 700 /var/lib/private/quiz`,
-  add `- /var/lib/private/quiz:/quiz` to the volumes, and set
-  `QUIZ_STATE_DIR=/quiz`.
+The quiz keeps its own files in `QUIZ_STATE_DIR`. There's nothing to set
+up: signalbot sets it to `addons/quiz` in its own state directory
+(`/var/lib/signalbot/addons/quiz` under systemd, `/data/addons/quiz` in
+Docker), and the quiz creates it, for the bot's user alone. To keep them
+elsewhere, set `QUIZ_STATE_DIR` in `/etc/signalbot.env` to a directory the
+bot's user may create or write.
 
 It shares the bot's memory limit, so allow for `QUIZ_MEMLIMIT` in
 `mem_limit` or `MemoryMax`.
@@ -127,7 +124,7 @@ settings, and nothing else.
 
 | Variable | Default | Description |
 |---|---|---|
-| `QUIZ_STATE_DIR` | — (required) | Where the quiz keeps `quiz.json` and its log. Create it, writable by the bot's user; the quiz exits at start if it can't list and write it |
+| `QUIZ_STATE_DIR` | signalbot's `addons/quiz` | Where the quiz keeps `quiz.json` and its log. Created, mode 700, if missing; the quiz exits at start if it can't create, list and write it |
 | `QUIZ_QUESTIONS` | `5` | A quiz's questions when `/quiz` doesn't say, 1 to 10 |
 | `QUIZ_TIME` | `30s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
 | `QUIZ_LANGUAGE` | `English` | The language the model writes the questions and answers in, by name (letters, spaces and hyphens, up to 40) |
@@ -218,10 +215,13 @@ The quiz adds:
   `replies: true`, no pattern, `tool: "quiz_answer"`, until 10s past the
   quiz's end. No answer's result asks the bot to react, as reactions take
   from the chat's post rate, and a post over it is lost.
-- When a question's time is up (3s after its deadline, for answers still in
-  the bot's queue), it queues one `post`: the answer and explanation, who
-  got it right as `{u_…}` placeholders, and the next question. After the
-  last, the post holds the results instead, followed by an `unwatch`.
+- Each question is a `post` of its own; question 1 is queued during the
+  `/quiz` call, so it follows the intro the call answers with. When a
+  question's time is up (3s after its deadline, for answers still in the
+  bot's queue), it queues the answer and explanation, with who got it right
+  as `{u_…}` placeholders, as a post with `replyTo` the question's post,
+  then the next question as a new post. After the last, the results follow
+  as a new post, then an `unwatch`.
   `/quiz end` answers with the open question's answer and the results itself
   and queues only the `unwatch`. Every post stays under the bot's 4000
   characters.

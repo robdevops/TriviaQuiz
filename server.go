@@ -50,6 +50,7 @@ type quiz struct {
 	Started   time.Time         `json:"started"` // when question 1 opened
 	End       time.Time         `json:"end"`     // when the last question is due to be revealed
 	Current   int               `json:"current"` // the open question, from 0
+	Post      string            `json:"post"`    // the outbox op that asked it, for the reveal to reply to
 	Opened    time.Time         `json:"opened"`  // when it opened
 	Deadline  time.Time         `json:"deadline"`
 	Answers   map[string]answer `json:"answers"` // the open question's, by player
@@ -216,10 +217,14 @@ func validID(id, prefix string) bool {
 	return true
 }
 
-// queue adds ops to the outbox. The quiz's ops are small and have no
-// images, so the outbox never refuses them; if it did, the log says so.
-func (s *server) queue(ops ...addon.Op) {
-	if err := s.srv.Queue(ops...); err != nil {
+// queue adds ops to the outbox and returns the IDs they got. The quiz's
+// ops are small and have no images, so the outbox never refuses them; if
+// it did, the log says so.
+func (s *server) queue(ops ...addon.Op) []string {
+	ids, err := s.srv.QueueIDs(ops...)
+	if err != nil {
 		s.log.Printf("an op was refused: %v", err)
+		return make([]string, len(ops))
 	}
+	return ids
 }

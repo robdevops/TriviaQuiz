@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	mrand "math/rand/v2"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -584,9 +585,18 @@ func TestQuiz(t *testing.T) {
 		w.Until != began.Add(3*(20*time.Second+settle)+watchSlack).Format(time.RFC3339) {
 		t.Errorf("watch %+v", w)
 	}
-	first := words(r)
-	if !strings.HasPrefix(first, "🧠 **Quiz: australia** · 3 questions, 20s each.\n") ||
-		!strings.Contains(first, "\n\n**Question 1 of 3** · easy · 20s\nWhat is the capital of Australia?\nA. ") ||
+	if intro := words(r); !strings.HasPrefix(intro, "🧠 **Quiz: australia** · 3 questions, 20s each.\n") || strings.Contains(intro, "Question 1") {
+		t.Errorf("intro %q", intro)
+	}
+	// Question 1 is a post of its own, for its answer to reply to.
+	c.note()
+	page := c.outbox("0")
+	if len(page.Ops) != 1 || page.Ops[0].Op != "post" || page.Ops[0].ReplyTo != "" {
+		t.Fatalf("question 1 %+v", page)
+	}
+	q1 := page.Ops[0]
+	first := q1.Text
+	if !strings.HasPrefix(first, "**Question 1 of 3** · easy · 20s\nWhat is the capital of Australia?\nA. ") ||
 		!strings.HasSuffix(first, "\n↩️ Reply with A, B, C or D.") {
 		t.Errorf("first question %q", first)
 	}
@@ -614,7 +624,7 @@ func TestQuiz(t *testing.T) {
 	if r := c.reply(right, from(clk, "c_two", bob)); recorded(r) || words(r) != noQuiz {
 		t.Errorf("an answer in another chat: %+v", r)
 	}
-	if p := c.outbox("0"); len(p.Ops) != 0 {
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
 		t.Errorf("ops before time is up: %+v", p)
 	}
 
@@ -622,12 +632,14 @@ func TestQuiz(t *testing.T) {
 	if m := c.note(); m != "notifications/resources/updated" {
 		t.Errorf("notification %q", m)
 	}
-	page := c.outbox("0")
-	want := "✅ **" + right + ". Canberra**: Because of What is the capital of Australia?.\nRight: {u_alice} ⚡\n\n" +
-		"**Question 2 of 3** · medium · 20s\nWhat is the highest mountain on Earth?\n↩️ Reply with your answer."
-	if len(page.Ops) != 1 || page.Ops[0].Op != "post" || page.Ops[0].Chat != chat || page.Ops[0].Text != want {
-		t.Fatalf("page %+v\nwant %q", page, want)
+	page = c.outbox(page.Cursor)
+	want := "✅ **" + right + ". Canberra**: Because of What is the capital of Australia?.\nRight: {u_alice} ⚡"
+	next := "**Question 2 of 3** · medium · 20s\nWhat is the highest mountain on Earth?\n↩️ Reply with your answer."
+	if len(page.Ops) != 2 || page.Ops[0].Op != "post" || page.Ops[0].Chat != chat || page.Ops[0].Text != want || page.Ops[0].ReplyTo != q1.ID ||
+		page.Ops[1].Text != next || page.Ops[1].ReplyTo != "" {
+		t.Fatalf("page %+v\nwant %q as a reply to %s, then %q", page, want, q1.ID, next)
 	}
+	q2 := page.Ops[1]
 
 	clk.Advance(2 * time.Second)
 	if r := c.reply("Everst", from(clk, chat, bob)); !recorded(r) {
@@ -640,19 +652,21 @@ func TestQuiz(t *testing.T) {
 	clk.Advance(17*time.Second + settle)
 	c.note()
 	page = c.outbox(page.Cursor)
-	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "✅ **Everest**: Because of What is the highest mountain on Earth?.\nRight: {u_bob} ⚡, {u_alice}\n\n**Question 3 of 3** · hard") {
+	if len(page.Ops) != 2 || page.Ops[0].Text != "✅ **Everest**: Because of What is the highest mountain on Earth?.\nRight: {u_bob} ⚡, {u_alice}" ||
+		page.Ops[0].ReplyTo != q2.ID || !strings.HasPrefix(page.Ops[1].Text, "**Question 3 of 3** · hard") {
 		t.Fatalf("second reveal %+v", page)
 	}
+	q3 := page.Ops[1]
 
 	clk.Advance(20*time.Second + settle) // nobody answers
 	c.note()
 	page = c.outbox(page.Cursor)
-	results := "\nNobody got it.\n\n🏁 **Quiz over**\n🥇 {u_alice} 20 · 2/3 right\n🥈 {u_bob} 15 · 1/3 right"
-	if len(page.Ops) != 2 || !strings.Contains(page.Ops[0].Text, ". Saturn**") ||
-		!strings.HasSuffix(page.Ops[0].Text, results) {
-		t.Fatalf("results %+v\nwant …%q", page, results)
+	results := "🏁 **Quiz over**\n🥇 {u_alice} 20 · 2/3 right\n🥈 {u_bob} 15 · 1/3 right"
+	if len(page.Ops) != 3 || !strings.Contains(page.Ops[0].Text, ". Saturn**") || !strings.HasSuffix(page.Ops[0].Text, "\nNobody got it.") ||
+		page.Ops[0].ReplyTo != q3.ID || page.Ops[1].Text != results || page.Ops[1].ReplyTo != "" {
+		t.Fatalf("results %+v\nwant %q", page, results)
 	}
-	if o := page.Ops[1]; o.Op != "unwatch" || o.Chat != chat || o.Watch != w.ID {
+	if o := page.Ops[2]; o.Op != "unwatch" || o.Chat != chat || o.Watch != w.ID {
 		t.Errorf("unwatch %+v", o)
 	}
 	if r := c.reply("A", from(clk, chat, bob)); recorded(r) || words(r) != noQuiz {
@@ -745,7 +759,7 @@ func TestEnd(t *testing.T) {
 	}
 	c.note()
 	page := c.outbox("0")
-	if len(page.Ops) != 1 || page.Ops[0].Op != "unwatch" {
+	if len(page.Ops) != 2 || page.Ops[0].Op != "post" || page.Ops[1].Op != "unwatch" {
 		t.Errorf("after an end: %+v", page)
 	}
 	clk.Advance(5 * time.Minute) // the quiz's timer, stopped
@@ -985,7 +999,10 @@ func TestRestart(t *testing.T) {
 	c.initialize(false, false)
 	c.note()
 	page := c.outbox("old.4")
-	if len(page.Ops) != 1 || !strings.Contains(page.Ops[0].Text, "Right: {u_alice} ⚡, {u_bob}\n\n**Question 2 of 3** · medium · 1 min\n") {
+	// The question asked before the restart, then its answer, as a reply
+	// to it, and question 2.
+	if len(page.Ops) != 3 || !strings.HasSuffix(page.Ops[1].Text, "Right: {u_alice} ⚡, {u_bob}") || page.Ops[1].ReplyTo != page.Ops[0].ID ||
+		!strings.HasPrefix(page.Ops[2].Text, "**Question 2 of 3** · medium · 1 min\n") {
 		t.Fatalf("ops %+v", page)
 	}
 	if !strings.Contains(logs.String(), "1 quizzes open, 1 questions revealed late") {
@@ -1000,7 +1017,7 @@ func TestRestart(t *testing.T) {
 	page = c.outbox(page.Cursor)
 	// The last question gets what is left of the watch: the restart cost
 	// question 1 seven seconds, of which the slack covers five.
-	if len(page.Ops) != 1 || !strings.Contains(page.Ops[0].Text, "**Question 3 of 3** · hard · 58s\n") {
+	if len(page.Ops) != 2 || page.Ops[0].ReplyTo == "" || !strings.Contains(page.Ops[1].Text, "**Question 3 of 3** · hard · 58s\n") {
 		t.Fatalf("question 3 %+v", page)
 	}
 	c.close()
@@ -1191,8 +1208,8 @@ func TestLongReveal(t *testing.T) {
 	}
 	clk.Advance(30*time.Second + settle)
 	c.note()
-	text := c.outbox("0").Ops[0].Text
-	if !strings.Contains(text, "{u_player19} and 10 more\n\n") || len([]rune(text)) > maxPost {
+	text := c.outbox("0").Ops[1].Text
+	if !strings.HasSuffix(text, "{u_player19} and 10 more") || len([]rune(text)) > maxPost {
 		t.Errorf("reveal %q", text)
 	}
 }
@@ -1227,8 +1244,13 @@ func TestConfig(t *testing.T) {
 			t.Errorf("%v: %v", bad, err)
 		}
 	}
-	if err := checkDir(dir + "/missing"); err == nil {
-		t.Error("a missing directory")
+	if err := checkDir(dir + "/missing/quiz"); err != nil {
+		t.Errorf("a missing directory isn't created: %v", err)
+	} else if fi, err := os.Stat(dir + "/missing/quiz"); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Errorf("the directory made: %v %v", fi, err)
+	}
+	if err := checkDir("/proc/quiz"); err == nil {
+		t.Error("a directory that can't be made")
 	}
 }
 

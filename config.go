@@ -60,7 +60,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	var errs []error
 	if c.StateDir == "" {
-		errs = append(errs, errors.New("QUIZ_STATE_DIR is not set: set it to a directory the quiz can write, and create it"))
+		errs = append(errs, errors.New("QUIZ_STATE_DIR is not set: signalbot sets it for an addon called quiz from its own state directory, or set it to a directory the quiz may create or write"))
 	}
 	var err error
 	if c.MemLimit, err = parseSize(cmp.Or(strings.TrimSpace(getenv("QUIZ_MEMLIMIT")), defaultMemLimit)); err != nil {
@@ -151,10 +151,14 @@ func parseSize(s string) (int64, error) {
 	return int64(n * float64(mult)), nil
 }
 
-// checkDir fails unless dir can be listed and written, leaving nothing.
+// checkDir creates dir, for the quiz's user alone, if it isn't there, and
+// fails unless it can be listed and written, leaving nothing.
 func checkDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("QUIZ_STATE_DIR %s can't be created (%v): create it, writable by the bot's user", dir, err)
+	}
 	if _, err := os.ReadDir(dir); err != nil {
-		return fmt.Errorf("QUIZ_STATE_DIR %s can't be read (%v): create it, writable by the bot's user", dir, err)
+		return fmt.Errorf("QUIZ_STATE_DIR %s can't be read (%v): make it readable by the bot's user", dir, err)
 	}
 	f, err := os.CreateTemp(dir, ".check-*")
 	if err == nil {

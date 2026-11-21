@@ -255,7 +255,11 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	s.quizzes[c.Chat] = q
 	s.remember(c.Chat, qs, now)
 	s.arm(q)
-	text := intro(q) + "\n\n" + questionText(q)
+	// The question is a post of its own, so its answer can reply to it. It
+	// waits in the chat's mailbox behind this call's answer, the intro, so
+	// it always comes second, once the watch that takes its replies is on.
+	q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
+	text := intro(q)
 	s.mu.Unlock()
 	s.save()
 	s.log.Printf("quiz %s started: %d questions of %s, %d sampling rounds in %s, %d rejected, %d repeats",
@@ -346,14 +350,19 @@ func (s *server) revealLocked(q *quiz) {
 	if next < len(q.Questions) && length >= minTime {
 		q.Current, q.Opened, q.Deadline, q.Answers = next, now, now.Add(length), map[string]answer{}
 		s.arm(q)
-		s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(revealed+"\n\n"+questionText(q), maxPost)})
+		q.Post = s.queue(s.reply(q, revealed), addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[1]
 		return
 	}
 	if next < len(q.Questions) {
 		s.log.Printf("quiz %s cut short: %d questions left that no longer fit", q.ID, len(q.Questions)-next)
 	}
 	results := s.end(q, now)
-	s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(revealed+"\n\n"+results, maxPost)}, addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
+	s.queue(s.reply(q, revealed), addon.Op{Op: "post", Chat: q.Chat, Text: clamp(results, maxPost)}, addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
+}
+
+// reply is the post of a question's answer, as a reply to the question.
+func (s *server) reply(q *quiz, revealed string) addon.Op {
+	return addon.Op{Op: "post", Chat: q.Chat, Text: clamp(revealed, maxPost), ReplyTo: q.Post}
 }
 
 // mark scores q's open question and returns its reveal: the answer, the
