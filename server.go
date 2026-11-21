@@ -1,0 +1,225 @@
+package main
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"log"
+	mrand "math/rand/v2"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/robdevops/chat-plugin-quiz/internal/state"
+	"github.com/robdevops/signalbot/addon"
+)
+
+// server is the quiz: the chats' quizzes, their scores and the questions
+// asked lately. srv speaks to the bot, and holds the outbox it reads.
+type server struct {
+	cfg   config
+	clock clock
+	log   *log.Logger
+	doc   *state.Doc
+	srv   *addon.Server
+	slot  chan struct{} // one quiz written at a time, as the bot takes one sampling request at a time
+
+	randMu sync.Mutex
+	rand   *mrand.Rand
+
+	mu      sync.Mutex
+	quizzes map[string]*quiz   // by chat
+	timers  map[string]stopper // each quiz's, by chat
+	writing map[string]bool    // chats whose quiz the model is writing
+	scores  map[string][]score // by chat, the last scoreDays days
+	asked   map[string][]stamp // by chat, the questions of the last askedDays days
+
+	saveMu sync.Mutex // one save at a time, so the last one written is the newest
+}
+
+// quiz is one chat's quiz. Its answers are kept only as right or wrong:
+// what anyone replied is never kept.
+type quiz struct {
+	ID        string            `json:"id"` // also the watch's
+	Chat      string            `json:"chat"`
+	Starter   string            `json:"starter"` // who may end it
+	Topic     string            `json:"topic"`
+	Questions []question        `json:"questions"`
+	Time      time.Duration     `json:"time"`    // each question's
+	Started   time.Time         `json:"started"` // when question 1 opened
+	End       time.Time         `json:"end"`     // when the last question is due to be revealed
+	Current   int               `json:"current"` // the open question, from 0
+	Opened    time.Time         `json:"opened"`  // when it opened
+	Deadline  time.Time         `json:"deadline"`
+	Answers   map[string]answer `json:"answers"` // the open question's, by player
+	Seq       int               `json:"seq"`     // the answers recorded so far, to break ties
+	Points    map[string]int    `json:"points"`  // by player
+	Right     map[string]int    `json:"right"`   // questions right, by player
+}
+
+// question is one question as played: its choices already shuffled.
+type question struct {
+	Q           string   `json:"q"`
+	Kind        string   `json:"kind"` // "choice" or "text"
+	Difficulty  string   `json:"difficulty"`
+	Choices     []string `json:"choices,omitempty"`
+	Answer      int      `json:"answer"`            // a choice question's, from 0
+	Answers     []string `json:"answers,omitempty"` // a text question's accepted answers
+	Explanation string   `json:"explanation"`
+}
+
+// answer is whether one player's first answer to the open question was
+// right, and when it was sent.
+type answer struct {
+	Right bool      `json:"right"`
+	At    time.Time `json:"at"`
+	Seq   int       `json:"seq"`
+}
+
+// score is a player's points from one quiz.
+type score struct {
+	User   string    `json:"user"`
+	Points int       `json:"points"`
+	At     time.Time `json:"at"`
+}
+
+// stamp is a question asked in a chat: a hash of its normalised text, and
+// when.
+type stamp struct {
+	Hash string    `json:"hash"`
+	At   time.Time `json:"at"`
+}
+
+// saved is quiz.json.
+type saved struct {
+	Quizzes []*quiz            `json:"quizzes"`
+	Scores  map[string][]score `json:"scores"`
+	Asked   map[string][]stamp `json:"asked"`
+	Outbox  []addon.Held       `json:"outbox"`
+}
+
+// The state's limits, and the slack on a question's end.
+const (
+	scoreDays = 7
+	askedDays = 30
+	maxAsked  = 3000 // questions remembered per chat
+	// settle is how long after its deadline a question is revealed, so an
+	// answer sent in time that waited in the bot's queue still counts.
+	settle = 3 * time.Second
+	// watchSlack is how long after the quiz's end the bot keeps the watch,
+	// so a late answer still stays out of the chat's history.
+	watchSlack = 10 * time.Second
+	// lateSlack is how late a timer may fire before the next question no
+	// longer fits within the watch.
+	lateSlack = 5 * time.Second
+)
+
+// newServer loads the state saved in cfg.StateDir, re-arms its quizzes'
+// timers and reveals at once the questions whose time passed while it was
+// down.
+func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*server, error) {
+	s := &server{
+		cfg: cfg, clock: clk, log: logger, rand: rnd,
+		doc:     state.Open(cfg.StateDir, "quiz"),
+		slot:    make(chan struct{}, 1),
+		quizzes: map[string]*quiz{},
+		timers:  map[string]stopper{},
+		writing: map[string]bool{},
+		scores:  map[string][]score{},
+		asked:   map[string][]stamp{},
+	}
+	s.srv = addon.New(addon.Config{Name: "quiz", Title: "Quiz", Version: "1", Tools: s.tools(), Now: clk.Now, Changed: s.save})
+	var st saved
+	if _, err := s.doc.Load(&st); err != nil {
+		return nil, err
+	}
+	if st.Scores != nil {
+		s.scores = st.Scores
+	}
+	if st.Asked != nil {
+		s.asked = st.Asked
+	}
+	s.srv.Restore(st.Outbox)
+	s.mu.Lock()
+	revealed := 0
+	for _, q := range st.Quizzes {
+		if q == nil || s.quizzes[q.Chat] != nil || q.Current >= len(q.Questions) {
+			continue
+		}
+		if q.Answers == nil {
+			q.Answers = map[string]answer{}
+		}
+		if q.Points == nil {
+			q.Points = map[string]int{}
+		}
+		if q.Right == nil {
+			q.Right = map[string]int{}
+		}
+		s.quizzes[q.Chat] = q
+		if !s.clock.Now().Before(q.Deadline.Add(settle)) {
+			s.revealLocked(q)
+			revealed++
+		} else {
+			s.arm(q)
+		}
+	}
+	open := len(s.quizzes)
+	s.mu.Unlock()
+	s.log.Printf("started: %d quizzes open, %d questions revealed late, %d ops held", open, revealed, len(s.srv.Outbox()))
+	if revealed > 0 {
+		s.save()
+	}
+	return s, nil
+}
+
+// save writes quiz.json, logging a failure; the state stays in memory, and
+// the next change tries again.
+func (s *server) save() {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	s.mu.Lock()
+	st := saved{Scores: s.scores, Asked: s.asked, Outbox: s.srv.Outbox(), Quizzes: make([]*quiz, 0, len(s.quizzes))}
+	for _, q := range s.quizzes {
+		st.Quizzes = append(st.Quizzes, q)
+	}
+	slices.SortFunc(st.Quizzes, func(a, b *quiz) int { return strings.Compare(a.Chat, b.Chat) })
+	data, err := json.Marshal(st)
+	s.mu.Unlock()
+	if err == nil {
+		err = s.doc.Save(json.RawMessage(data))
+	}
+	if err != nil {
+		s.log.Printf("saving failed: %v", err)
+	}
+}
+
+// randomID is n random bytes in hex.
+func randomID(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// validID reports whether id is one of signalbot's pseudonyms with prefix
+// (c_ or u_), so it can go into a {u_…} placeholder safely.
+func validID(id, prefix string) bool {
+	rest, ok := strings.CutPrefix(id, prefix)
+	if !ok || rest == "" || len(rest) > 100 {
+		return false
+	}
+	for _, c := range rest {
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// queue adds ops to the outbox. The quiz's ops are small and have no
+// images, so the outbox never refuses them; if it did, the log says so.
+func (s *server) queue(ops ...addon.Op) {
+	if err := s.srv.Queue(ops...); err != nil {
+		s.log.Printf("an op was refused: %v", err)
+	}
+}
