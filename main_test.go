@@ -1396,7 +1396,7 @@ func TestFirstTime(t *testing.T) {
 	c.quiz("end", from(clk, chat, alice))
 
 	model.add(asJSON(landing, element)) // questions not yet asked
-	if got := words(c.quiz("2 90s", from(clk, chat, alice))); !strings.Contains(got, " · 2 questions, 90s each.\n") {
+	if got := words(c.quiz("2 90s", from(clk, chat, alice))); !strings.Contains(got, " · 2 questions, 1m30s each.\n") {
 		t.Errorf("a longer time: %q", got)
 	}
 }
