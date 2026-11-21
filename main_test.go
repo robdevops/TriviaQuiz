@@ -597,7 +597,7 @@ func TestQuiz(t *testing.T) {
 	q1 := page.Ops[0]
 	first := q1.Text
 	if !strings.HasPrefix(first, "**Question 1 of 3** · easy · 20s\nWhat is the capital of Australia?\nA. ") ||
-		!strings.HasSuffix(first, "\n↩️ Reply with A, B, C or D.") {
+		!strings.HasSuffix(first, "\n↩️ Reply to this message with A, B, C or D.") {
 		t.Errorf("first question %q", first)
 	}
 	right := letterOf(t, c, "Canberra")
@@ -634,7 +634,7 @@ func TestQuiz(t *testing.T) {
 	}
 	page = c.outbox(page.Cursor)
 	want := "✅ **" + right + ". Canberra**: Because of What is the capital of Australia?.\nRight: {u_alice} ⚡"
-	next := "**Question 2 of 3** · medium · 20s\nWhat is the highest mountain on Earth?\n↩️ Reply with your answer."
+	next := "**Question 2 of 3** · medium · 20s\nWhat is the highest mountain on Earth?\n↩️ Reply to this message with your answer."
 	if len(page.Ops) != 2 || page.Ops[0].Op != "post" || page.Ops[0].Chat != chat || page.Ops[0].Text != want || page.Ops[0].ReplyTo != q1.ID ||
 		page.Ops[1].Text != next || page.Ops[1].ReplyTo != "" {
 		t.Fatalf("page %+v\nwant %q as a reply to %s, then %q", page, want, q1.ID, next)

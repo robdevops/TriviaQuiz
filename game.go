@@ -293,9 +293,9 @@ func questionText(q *quiz) string {
 		for i, c := range qn.Choices {
 			b.WriteString("\n" + string(rune('A'+i)) + ". " + c)
 		}
-		b.WriteString("\n↩️ Reply with A, B, C or D.")
+		b.WriteString("\n↩️ Reply to this message with A, B, C or D.")
 	} else {
-		b.WriteString("\n↩️ Reply with your answer.")
+		b.WriteString("\n↩️ Reply to this message with your answer.")
 	}
 	return b.String()
 }
