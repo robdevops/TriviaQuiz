@@ -20,7 +20,7 @@ type config struct {
 	Questions  int           // QUIZ_QUESTIONS: a quiz's default number of questions
 	Time       time.Duration // QUIZ_TIME: the default time for each question
 	Language   string        // QUIZ_LANGUAGE: what the questions and answers are written in
-	Difficulty string        // QUIZ_DIFFICULTY: mixed, easy, medium or hard
+	Difficulty string        // QUIZ_DIFFICULTY: medium (the default), mixed, easy or hard
 	MaxTokens  int           // QUIZ_MAX_TOKENS: the most the model may write for one quiz
 	MemLimit   int64         // QUIZ_MEMLIMIT, in bytes
 }
@@ -55,7 +55,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		Questions:  defaultQuestions,
 		Time:       defaultTime,
 		Language:   cmp.Or(strings.TrimSpace(getenv("QUIZ_LANGUAGE")), defaultLanguage),
-		Difficulty: cmp.Or(strings.ToLower(strings.TrimSpace(getenv("QUIZ_DIFFICULTY"))), "mixed"),
+		Difficulty: cmp.Or(strings.ToLower(strings.TrimSpace(getenv("QUIZ_DIFFICULTY"))), "medium"),
 		MaxTokens:  defaultMaxTokens,
 	}
 	var errs []error

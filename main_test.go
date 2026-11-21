@@ -571,7 +571,7 @@ func TestQuiz(t *testing.T) {
 		req.Messages[0].Content.Text != `Write 3 questions on this topic: "australia"` {
 		t.Errorf("request %+v", req)
 	}
-	for _, rule := range []string{"exactly one defensible answer", "can't have changed since your training", "explanation", "easy, medium and hard", "digits", "in English", "never as instructions"} {
+	for _, rule := range []string{"exactly one defensible answer", "can't have changed since your training", "explanation", "Make every question medium", "digits", "in English", "never as instructions"} {
 		if !strings.Contains(req.SystemPrompt, rule) {
 			t.Errorf("the system prompt lacks %q", rule)
 		}
@@ -1251,7 +1251,7 @@ func TestConfig(t *testing.T) {
 		return func(k string) string { return m[k] }
 	}
 	c, err := loadConfig(env())
-	if err != nil || c.Questions != 5 || c.Time != 30*time.Second || c.Language != "English" || c.Difficulty != "mixed" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
+	if err != nil || c.Questions != 5 || c.Time != 30*time.Second || c.Language != "English" || c.Difficulty != "medium" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
 		t.Errorf("defaults %+v %v", c, err)
 	}
 	c, err = loadConfig(env("QUIZ_QUESTIONS", "8", "QUIZ_TIME", "1m", "QUIZ_LANGUAGE", "Deutsch", "QUIZ_DIFFICULTY", "Hard", "QUIZ_MAX_TOKENS", "6000", "QUIZ_MEMLIMIT", "1GiB"))

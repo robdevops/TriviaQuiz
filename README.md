@@ -137,7 +137,7 @@ settings, and nothing else.
 | `QUIZ_QUESTIONS` | `5` | A quiz's questions when `/quiz` doesn't say, 1 to 10 |
 | `QUIZ_TIME` | `30s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
 | `QUIZ_LANGUAGE` | `English` | The language the model writes the questions and answers in, by name (letters, spaces and hyphens, up to 40) |
-| `QUIZ_DIFFICULTY` | `mixed` | `mixed` (about a third each of easy, medium and hard), or `easy`, `medium` or `hard` for every question |
+| `QUIZ_DIFFICULTY` | `medium` | `easy`, `medium` or `hard` for every question, or `mixed` (about a third each) |
 | `QUIZ_MAX_TOKENS` | `3000` | The most the model may write for one quiz, 500 to 32000; the addon block's `max_tokens` caps it too |
 | `QUIZ_MEMLIMIT` | `64MiB` | Memory limit, applied with `debug.SetMemoryLimit`, written as `GOMEMLIMIT` is (`B`, `KiB`, `MiB`, `GiB`, `TiB`) |
 
