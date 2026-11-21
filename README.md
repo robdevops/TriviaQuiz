@@ -64,15 +64,17 @@ The build downloads signalbot's module, at the commit `go.mod` names, for
 its `addon` package; only that package, which needs nothing beyond Go's
 standard library, is built into the quiz.
 
-Mount it read-only: under Docker, add `- /opt/signalbot-addons:/addons:ro` to
-the volumes in `compose.yaml`; under systemd, use the host path, or bind it
-with `BindReadOnlyPaths=/opt/signalbot-addons:/addons` in a drop-in. Then add
+Give its full path as `command`. Under systemd there's nothing to mount:
+the unit's `ProtectSystem=strict` leaves `/opt` readable. Under Docker,
+mount the directory read-only at the same path, by adding
+`- /opt/signalbot-addons:/opt/signalbot-addons:ro` to the volumes in
+`compose.yaml`, so the same file works for both. Then add
 it to the MCP servers file (`MCP_CONFIG`). The server must be called `quiz`,
 which is what gives it the `QUIZ_` settings below:
 
 ```jsonc
 "quiz": {
-  "command": "/addons/quiz",
+  "command": "/opt/signalbot-addons/quiz",
   "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
   "addon": {
     "chats": ["<group id>"],
