@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -279,7 +280,7 @@ func intro(q *quiz) string {
 	if q.Topic != "" {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
-	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it.",
+	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. From question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
 		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time))
 }
 
@@ -344,6 +345,9 @@ func (s *server) timeUp(chat, id string, current int) {
 // only the time the watch has left. s.mu is held.
 func (s *server) revealLocked(q *quiz) {
 	now := s.clock.Now()
+	if q.Current == 0 {
+		q.Players = slices.Sorted(maps.Keys(q.Answers))
+	}
 	revealed := s.mark(q)
 	next := q.Current + 1
 	length := min(q.Time, q.End.Add(lateSlack).Sub(now)-settle)
@@ -537,9 +541,31 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 	}
 	q.Seq++
 	q.Answers[c.Sender] = answer{Right: right, At: at, Seq: q.Seq}
+	if s.allAnswered(q) {
+		// Everyone playing has answered: end the question now, revealing it
+		// after settle, as at its deadline, for answers still on their way.
+		q.Deadline = s.clock.Now()
+		s.arm(q)
+		s.log.Printf("quiz %s question %d ended early", q.ID, q.Current+1)
+	}
 	s.mu.Unlock()
 	s.save()
 	return addon.Text("Recorded.")
+}
+
+// allAnswered reports whether a question after the first has an answer
+// from each player of question 1, and is still before its deadline. s.mu
+// is held.
+func (s *server) allAnswered(q *quiz) bool {
+	if q.Current == 0 || len(q.Players) == 0 || !s.clock.Now().Before(q.Deadline) {
+		return false
+	}
+	for _, p := range q.Players {
+		if _, ok := q.Answers[p]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // scoreboard is /quiz scores: the chat's totals over the last scoreDays.

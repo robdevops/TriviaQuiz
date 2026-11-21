@@ -44,6 +44,12 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
+- **No waiting once everyone's in.** Question 1 runs its full time; whoever
+  answers it is playing. From question 2 on, a question ends as soon as all
+  of them have answered (3s later, for answers still on their way), so a
+  quiz goes as fast as its players. Someone who joins later still scores,
+  but isn't waited for; a player who stops answering just means the timer
+  runs.
 - Messages that aren't replies to the quiz are left alone, so the chat
   carries on around it.
 - **Points:** 5 for an easy question, 10 for a medium one, 15 for a hard
@@ -192,7 +198,8 @@ player replies goes to the model: answers are marked by the quiz itself.
   questions with their answers and explanations, the open question's
   deadline, and for each player (a per-chat pseudonym) only whether their
   answer to the open question was right and when they sent it, and their
-  points so far. What anyone replied is never kept, in memory or on disk;
+  points so far; and who answered question 1, the players later questions
+  wait for. What anyone replied is never kept, in memory or on disk;
 - 7 days of points per chat, by player pseudonym;
 - 30 days of the questions asked in each chat: a hash of each, to refuse
   repeats, and the question with its answer, so the next quiz's prompt can

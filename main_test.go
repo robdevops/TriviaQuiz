@@ -1299,3 +1299,70 @@ func TestAskedExpires(t *testing.T) {
 		t.Errorf("%d questions remembered", n)
 	}
 }
+
+// From question 2 on, a question ends once everyone who answered question
+// 1 has answered, settle later; a newcomer doesn't hold it up; with no one
+// on question 1, the timer runs; a restart keeps who is playing.
+func TestEarlyEnd(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("1m", from(clk, chat, alice))
+	c.note()
+	page := c.outbox("0") // question 1
+	right := letterOf(t, c, "Canberra")
+	c.reply(right, from(clk, chat, alice))
+	c.reply(wrongLetter(c), from(clk, chat, bob))
+	clk.Advance(10 * time.Second)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Fatalf("question 1 ended before its time: %+v", p)
+	}
+	clk.Advance(50*time.Second + settle) // question 1 always runs its time
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 2 {
+		t.Fatalf("question 1's reveal %+v", page)
+	}
+	c.s.mu.Lock()
+	if p := c.s.quizzes[chat].Players; !slices.Equal(p, []string{alice, bob}) {
+		t.Errorf("players %v", p)
+	}
+	c.s.mu.Unlock()
+
+	// Question 2: Alice, then a newcomer, then Bob.
+	clk.Advance(5 * time.Second)
+	c.reply("Everest", from(clk, chat, alice))
+	c.reply("Everest", from(clk, chat, "u_carol"))
+	clk.Advance(settle)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Fatalf("question 2 ended before Bob answered: %+v", p)
+	}
+	c.reply("K2", from(clk, chat, bob))
+	after := from(clk, chat, bob)
+	after.Sent++ // a second after the early end
+	if r := c.reply("Everest", after); recorded(r) {
+		t.Errorf("an answer after the early end: %+v", r)
+	}
+	clk.Advance(settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 2 || !strings.Contains(page.Ops[0].Text, "Everest") || !strings.HasPrefix(page.Ops[1].Text, "**Question 3 of 3**") {
+		t.Fatalf("question 2's early reveal %+v", page)
+	}
+}
+
+// With nobody on question 1, later questions run their time.
+func TestNoEarlyEndWithoutPlayers(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("1m", from(clk, chat, alice))
+	c.note()
+	page := c.outbox("0")
+	clk.Advance(time.Minute + settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	c.reply("Everest", from(clk, chat, alice))
+	clk.Advance(30 * time.Second)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Fatalf("question 2 ended early with no players: %+v", p)
+	}
+}

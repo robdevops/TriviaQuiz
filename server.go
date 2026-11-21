@@ -54,6 +54,7 @@ type quiz struct {
 	Opened    time.Time         `json:"opened"`  // when it opened
 	Deadline  time.Time         `json:"deadline"`
 	Answers   map[string]answer `json:"answers"` // the open question's, by player
+	Players   []string          `json:"players"` // who answered question 1: a later question ends once they all have
 	Seq       int               `json:"seq"`     // the answers recorded so far, to break ties
 	Points    map[string]int    `json:"points"`  // by player
 	Right     map[string]int    `json:"right"`   // questions right, by player
