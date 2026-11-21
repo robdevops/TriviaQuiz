@@ -89,6 +89,7 @@ type score struct {
 // when.
 type stamp struct {
 	Hash string    `json:"hash"`
+	Fact string    `json:"fact,omitempty"` // the question and its answer, for the model to avoid
 	At   time.Time `json:"at"`
 }
 

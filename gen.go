@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,12 +84,40 @@ Rules:
 }
 
 // firstPrompt is the request for a quiz of n questions on topic.
-func firstPrompt(topic string, n int) string {
+func firstPrompt(topic string, n int, avoid []string) string {
 	about := "general knowledge"
 	if topic != "" {
 		about = strconv.Quote(topic)
 	}
-	return fmt.Sprintf("Write %d %s on this topic: %s", n, plural(n, "question", "questions"), about)
+	p := fmt.Sprintf("Write %d %s on this topic: %s", n, plural(n, "question", "questions"), about)
+	if len(avoid) > 0 {
+		p += "\n\nThis chat has had these questions lately. Ask none of them again, and nothing about the same facts in other words; pick less obvious corners of the topic:\n- " +
+			strings.Join(avoid, "\n- ")
+	}
+	return p
+}
+
+// temperature is the sampling temperature asked for: high enough that two
+// quizzes on one topic differ.
+var temperature = 1.0
+
+// The facts of recent questions put in the prompt: at most so many, the
+// newest, each at most so long.
+const (
+	maxAvoid    = 60
+	maxFactSize = 120
+)
+
+// fact is a question and its answer, short, for the model to avoid.
+func fact(q question) string {
+	a := ""
+	switch {
+	case q.Kind == "choice" && q.Answer >= 0 && q.Answer < len(q.Choices):
+		a = q.Choices[q.Answer]
+	case len(q.Answers) > 0:
+		a = q.Answers[0]
+	}
+	return clamp(q.Q+" → "+a, maxFactSize)
 }
 
 // followUp names what was wrong with the model's last answer and asks for
@@ -126,18 +155,22 @@ func (s *server) write(ctx context.Context, chat, topic string, n int) ([]questi
 	s.mu.Lock()
 	s.pruneAsked(s.clock.Now())
 	recent := map[string]bool{}
-	for _, a := range s.asked[chat] {
+	var avoid []string
+	for _, a := range slices.Backward(s.asked[chat]) { // newest first
 		recent[a.Hash] = true
+		if a.Fact != "" && len(avoid) < maxAvoid {
+			avoid = append(avoid, a.Fact)
+		}
 	}
 	s.mu.Unlock()
 	taken := map[string]bool{}
 	var good []question
-	msgs := []addon.SampleMessage{text("user", firstPrompt(topic, n))}
+	msgs := []addon.SampleMessage{text("user", firstPrompt(topic, n, avoid))}
 	system := s.systemPrompt()
 	for round := 0; round <= followUps; round++ {
 		st.rounds++
 		st.lastSent = s.clock.Now()
-		res, err := s.srv.Sample(ctx, chat, addon.SampleRequest{Messages: msgs, SystemPrompt: system, MaxTokens: s.cfg.MaxTokens})
+		res, err := s.srv.Sample(ctx, chat, addon.SampleRequest{Messages: msgs, SystemPrompt: system, MaxTokens: s.cfg.MaxTokens, Temperature: &temperature})
 		if err != nil {
 			var refused *addon.BotError
 			isBot := errors.As(err, &refused)
@@ -375,7 +408,7 @@ func questionHash(q string) string {
 func (s *server) remember(chat string, qs []question, now time.Time) {
 	s.pruneAsked(now)
 	for _, q := range qs {
-		s.asked[chat] = append(s.asked[chat], stamp{Hash: questionHash(q.Q), At: now})
+		s.asked[chat] = append(s.asked[chat], stamp{Hash: questionHash(q.Q), Fact: fact(q), At: now})
 	}
 	if over := len(s.asked[chat]) - maxAsked; over > 0 {
 		s.asked[chat] = s.asked[chat][over:]

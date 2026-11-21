@@ -798,6 +798,18 @@ func TestFollowUps(t *testing.T) {
 	if len(reqs) != 3 {
 		t.Fatalf("%d sampling requests", len(reqs))
 	}
+	// The model is told what the chat had lately, so it writes other facts,
+	// and asked for variety.
+	if p := reqs[0].Messages[0].Content.Text; !strings.Contains(p, "\n\nThis chat has had these questions lately.") ||
+		!strings.Contains(p, "\n- Which element has the symbol Fe? → Iron") {
+		t.Errorf("first prompt %q", p)
+	}
+	if first := model.sent()[0].Messages[0].Content.Text; strings.Contains(first, "lately") {
+		t.Errorf("a first quiz lists questions: %q", first)
+	}
+	if tp := reqs[0].Temperature; tp == nil || *tp != temperature {
+		t.Errorf("temperature %v", tp)
+	}
 	if m := reqs[1].Messages; len(m) != 3 || m[1].Role != "assistant" || m[1].Content.Text != "Here are your questions: [oops" ||
 		m[2].Content.Text != "That wasn't one JSON array of questions. Write 5 questions again, as one JSON array with nothing else." {
 		t.Errorf("first follow-up %+v", m)

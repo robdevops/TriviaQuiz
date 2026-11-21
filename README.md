@@ -153,8 +153,10 @@ the quiz checks what comes back.
   them, a free-text question with no accepted answers, a missing
   explanation or difficulty, a link, and over-long text (a question or an
   explanation over 300 characters, a choice over 80).
-- It keeps a hash of each question asked in a chat for 30 days, and rejects
-  a question asked there lately.
+- It tells the model the questions the chat had in the last 30 days (the
+  newest 60, each with its answer), and asks for none of them or the same
+  facts reworded, with a temperature of 1 for variety. It also keeps a hash
+  of each, and rejects a question asked there lately.
 - When some questions are rejected, it asks the model again in the same
   conversation, naming what was wrong ("question 3 repeats one asked in this
   chat recently; question 5 has an answer that isn't among its choices.
@@ -189,7 +191,9 @@ player replies goes to the model: answers are marked by the quiz itself.
   answer to the open question was right and when they sent it, and their
   points so far. What anyone replied is never kept, in memory or on disk;
 - 7 days of points per chat, by player pseudonym;
-- 30 days of hashes of the questions asked in each chat;
+- 30 days of the questions asked in each chat: a hash of each, to refuse
+  repeats, and the question with its answer, so the next quiz's prompt can
+  tell the model what not to ask again;
 - outbox ops the bot hasn't read yet, for at most an hour.
 
 `$QUIZ_STATE_DIR/quiz.log` (moved to `quiz.log.1` past 4 MiB at start)
