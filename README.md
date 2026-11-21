@@ -39,8 +39,11 @@ counts the cost against the chat's `DAILY_BUDGET`.
   "a", "an" and "the" don't matter, and a small slip is forgiven: one letter
   in an answer of 5 to 9 letters, two in one of 10 or more. Numbers must be
   exact.
-- **Your first answer counts.** Changing it, or editing the message, does
-  nothing. Answers get no reaction; the reveal says who got it right.
+- **Your last answer before time is up counts.** To change it, edit your
+  reply, or reply again (deleting the old one first if you like: a deleted
+  reply that isn't replaced still counts, as the bot doesn't tell addons of
+  deletes). Answers get no reaction, and the reveal says who got it right,
+  so changing one gives nothing away.
 - Messages that aren't replies to the quiz are left alone, so the chat
   carries on around it.
 - **Points:** 5 for an easy question, 10 for a medium one, 15 for a hard

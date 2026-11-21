@@ -279,7 +279,7 @@ func intro(q *quiz) string {
 	if q.Topic != "" {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
-	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your first answer counts.",
+	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it.",
 		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time))
 }
 
@@ -490,7 +490,9 @@ func medal(rank int) string {
 // answer records one reply to the quiz's messages as its sender's answer
 // to the open question: only whether it is right, never what it said. A
 // reply to a choice question that isn't a letter A to D is no answer, and
-// leaves the player free to answer. Only a player's first answer counts.
+// leaves the player free to answer. A player's last answer before the
+// deadline counts, by when the bot got it: a new reply or an edit replaces
+// an earlier answer.
 // A recorded answer gets no reaction: reactions take from the chat's post
 // budget, and a reveal post refused by it is lost.
 func (s *server) answer(c *addon.Context, msg string) addon.Result {
@@ -517,9 +519,9 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 		s.mu.Unlock()
 		return addon.Text("Too late for that question.")
 	}
-	if _, ok := q.Answers[c.Sender]; ok {
+	if prev, ok := q.Answers[c.Sender]; ok && at.Before(prev.At) { // an edit of an older answer, arriving late
 		s.mu.Unlock()
-		return addon.Text("Only your first answer counts.")
+		return addon.Text("A later answer of yours counts.")
 	}
 	qn := q.Questions[q.Current]
 	var right bool

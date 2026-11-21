@@ -618,7 +618,12 @@ func TestQuiz(t *testing.T) {
 	if r := c.reply(wrongLetter(c), from(clk, chat, bob)); !recorded(r) {
 		t.Errorf("Bob's answer after chatter: %+v", r)
 	}
-	if r := c.reply(right, from(clk, chat, bob)); recorded(r) || words(r) != "Only your first answer counts." {
+	// A new reply replaces an answer: Bob's second, another wrong letter,
+	// is the one that counts.
+	c.s.mu.Lock()
+	other := string(rune('A' + (c.s.quizzes[chat].Questions[0].Answer+2)%4))
+	c.s.mu.Unlock()
+	if r := c.reply(other, from(clk, chat, bob)); !recorded(r) {
 		t.Errorf("Bob's second answer: %+v", r)
 	}
 	if r := c.reply(right, from(clk, "c_two", bob)); recorded(r) || words(r) != noQuiz {
@@ -691,8 +696,9 @@ func TestQuiz(t *testing.T) {
 	}
 }
 
-// An answer too early or too late for the open question, an edit of a
-// recorded answer, and a message from before the quiz don't count.
+// An edit of an answer replaces it, while the question is open; an answer
+// too early or too late for the open question, an edit of an older
+// message, and one arriving after a later answer don't count.
 func TestLateAndEdited(t *testing.T) {
 	clk, c, model, _ := begin(t)
 	model.add(asJSON(capital, landing, element))
@@ -704,9 +710,18 @@ func TestLateAndEdited(t *testing.T) {
 	}
 	edit := first
 	edit.Edited = clk.Now().Add(time.Second).Unix()
-	if r := c.reply(letterOf(t, c, "Canberra"), edit); recorded(r) {
-		t.Errorf("an edit counted: %+v", r)
+	if r := c.reply(letterOf(t, c, "Canberra"), edit); !recorded(r) {
+		t.Errorf("an edit didn't count: %+v", r)
 	}
+	stale := first // the first version again, arriving after the edit
+	if r := c.reply(wrongLetter(c), stale); recorded(r) || words(r) != "A later answer of yours counts." {
+		t.Errorf("an older version counted: %+v", r)
+	}
+	c.s.mu.Lock()
+	if a := c.s.quizzes[chat].Answers[alice]; !a.Right {
+		t.Errorf("Alice's edited answer %+v", a)
+	}
+	c.s.mu.Unlock()
 	old := from(clk, chat, bob)
 	old.Sent, old.Edited = clk.Now().Add(-time.Hour).Unix(), clk.Now().Unix()
 	if r := c.reply("A", old); recorded(r) {
@@ -998,8 +1013,8 @@ func TestRestart(t *testing.T) {
 	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is on: question 1 of 3." {
 		t.Errorf("after a restart: %q", got)
 	}
-	if r := c.reply(right, from(clk, chat, alice)); recorded(r) {
-		t.Errorf("Alice answered twice: %+v", r)
+	if r := c.reply(right, from(clk, chat, alice)); !recorded(r) {
+		t.Errorf("Alice's answer again, after a restart: %+v", r)
 	}
 	c.reply(right, from(clk, chat, bob))
 	c.close()
