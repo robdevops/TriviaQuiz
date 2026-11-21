@@ -44,7 +44,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
-- **No waiting once everyone's in.** Question 1 runs its full time; whoever
+- **No waiting once everyone's in.** Question 1 runs its full time, 1 minute
+  by default (`QUIZ_FIRST_TIME`), so people can join; whoever
   answers it is playing. From question 2 on, a question ends as soon as all
   of them have answered (3s later, for answers still on their way), so a
   quiz goes as fast as its players. Someone who joins later still scores,
@@ -136,6 +137,7 @@ settings, and nothing else.
 | `QUIZ_STATE_DIR` | signalbot's `addons/quiz` | Where the quiz keeps `quiz.json` and its log. Created, mode 700, if missing; the quiz exits at start if it can't create, list and write it |
 | `QUIZ_QUESTIONS` | `5` | A quiz's questions when `/quiz` doesn't say, 1 to 10 |
 | `QUIZ_TIME` | `30s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
+| `QUIZ_FIRST_TIME` | `1m` | Question 1's time, 10s to 2m, or the quiz's time if that is longer: it gathers the players later questions wait for |
 | `QUIZ_LANGUAGE` | `English` | The language the model writes the questions and answers in, by name (letters, spaces and hyphens, up to 40) |
 | `QUIZ_DIFFICULTY` | `medium` | `easy`, `medium` or `hard` for every question, or `mixed` (about a third each) |
 | `QUIZ_MAX_TOKENS` | `3000` | The most the model may write for one quiz, 500 to 32000; the addon block's `max_tokens` caps it too |

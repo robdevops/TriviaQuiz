@@ -19,6 +19,7 @@ type config struct {
 	StateDir   string        // QUIZ_STATE_DIR: where quiz.json and the log are kept
 	Questions  int           // QUIZ_QUESTIONS: a quiz's default number of questions
 	Time       time.Duration // QUIZ_TIME: the default time for each question
+	FirstTime  time.Duration // QUIZ_FIRST_TIME: question 1's, at least, to gather the players
 	Language   string        // QUIZ_LANGUAGE: what the questions and answers are written in
 	Difficulty string        // QUIZ_DIFFICULTY: medium (the default), mixed, easy or hard
 	MaxTokens  int           // QUIZ_MAX_TOKENS: the most the model may write for one quiz
@@ -33,6 +34,7 @@ const (
 	minTime          = 10 * time.Second
 	maxTime          = 2 * time.Minute
 	defaultTime      = 30 * time.Second
+	defaultFirstTime = time.Minute
 	// maxQuiz is the longest a whole quiz may run, to fit well within the
 	// bot's watch_max (1h by default).
 	maxQuiz          = 30 * time.Minute
@@ -54,6 +56,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		StateDir:   strings.TrimSpace(getenv("QUIZ_STATE_DIR")),
 		Questions:  defaultQuestions,
 		Time:       defaultTime,
+		FirstTime:  defaultFirstTime,
 		Language:   cmp.Or(strings.TrimSpace(getenv("QUIZ_LANGUAGE")), defaultLanguage),
 		Difficulty: cmp.Or(strings.ToLower(strings.TrimSpace(getenv("QUIZ_DIFFICULTY"))), "medium"),
 		MaxTokens:  defaultMaxTokens,
@@ -74,6 +77,11 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if v := strings.TrimSpace(getenv("QUIZ_TIME")); v != "" {
 		if c.Time, err = questionTime(v); err != nil {
 			errs = append(errs, fmt.Errorf("QUIZ_TIME: %v", err))
+		}
+	}
+	if v := strings.TrimSpace(getenv("QUIZ_FIRST_TIME")); v != "" {
+		if c.FirstTime, err = questionTime(v); err != nil {
+			errs = append(errs, fmt.Errorf("QUIZ_FIRST_TIME: %v", err))
 		}
 	}
 	if !validLanguage(c.Language) {

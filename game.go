@@ -156,10 +156,12 @@ func (s *server) command(ctx context.Context, c *addon.Context, args string) add
 	if utf8.RuneCountInString(topic) > maxTopic {
 		return addon.Text(longTopic)
 	}
-	if time.Duration(n)*(length+settle) > maxQuiz {
+	// Question 1 runs at least QUIZ_FIRST_TIME, to gather the players.
+	first := max(s.cfg.FirstTime, length)
+	if first+settle+time.Duration(n-1)*(length+settle) > maxQuiz {
 		return addon.Text(longQuiz)
 	}
-	return s.start(ctx, c, topic, n, length)
+	return s.start(ctx, c, topic, n, first, length)
 }
 
 func allDigits(s string) bool {
@@ -175,7 +177,7 @@ func busy(q *quiz) addon.Result {
 
 // start has the model write a quiz for c's chat and begins it, answering
 // with its first question and the watch that takes the replies to it.
-func (s *server) start(ctx context.Context, c *addon.Context, topic string, n int, length time.Duration) addon.Result {
+func (s *server) start(ctx context.Context, c *addon.Context, topic string, n int, first, length time.Duration) addon.Result {
 	s.mu.Lock()
 	if q := s.quizzes[c.Chat]; q != nil {
 		s.mu.Unlock()
@@ -249,8 +251,8 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	q := &quiz{
 		ID: "q" + randomID(6), Chat: c.Chat, Starter: c.Sender, Topic: topic,
 		Questions: qs, Time: length,
-		Started: now, End: now.Add(time.Duration(len(qs)) * (length + settle)),
-		Opened: now, Deadline: now.Add(length),
+		Started: now, End: now.Add(first + settle + time.Duration(len(qs)-1)*(length+settle)),
+		Opened: now, Deadline: now.Add(first),
 		Answers: map[string]answer{}, Points: map[string]int{}, Right: map[string]int{},
 	}
 	s.quizzes[c.Chat] = q
@@ -274,14 +276,22 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 }
 
 // intro is the quiz's first lines: its topic, its length, and how to
-// answer.
+// answer. Question 1 is open.
 func intro(q *quiz) string {
 	title := "🧠 **Quiz**"
 	if q.Topic != "" {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
-	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. From question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
-		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time))
+	first := q.Deadline.Sub(q.Opened)
+	each := lengthLabel(q.Time) + " each"
+	switch {
+	case len(q.Questions) == 1:
+		each = lengthLabel(first)
+	case first != q.Time:
+		each = "the first " + lengthLabel(first) + ", then " + each
+	}
+	return fmt.Sprintf("%s · %d %s, %s.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. From question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
+		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), each)
 }
 
 // questionText is the open question, with its choices, and how to answer
