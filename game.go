@@ -296,8 +296,8 @@ func intro(q *quiz) string {
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby {
-		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join.** The quiz starts 30 seconds after the last player joins, once there are at least %d of you.\n%sA question ends as soon as everyone who joined has answered.",
-			title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), minPlayers, how)
+		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join.** You're in if you started it: the quiz starts 30 seconds after the next player joins, or after the last one if more join.\n%sA question ends as soon as everyone who joined has answered.",
+			title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
 	}
 	return fmt.Sprintf("%s · %d %s, %s each.\n%sFrom question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
 		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)

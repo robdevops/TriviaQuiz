@@ -47,8 +47,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave). It starts 30
   seconds after the last player joins, once there are at least 2 of you,
-  and is called off if fewer than 2 have joined after 5 minutes; whoever
-  starts it has joined. In a DM it starts at once. Those who joined are the
+  and is called off if fewer than 2 have joined after 5 minutes; whoever starts
+  it is in already, so one other player is enough. In a DM it starts at once. Those who joined are the
   players every question waits for; anyone may still answer. On Telegram
   the bot sees reactions only as the group's admin; a bot older than
   signalbot fe51891 starts the quiz at once.

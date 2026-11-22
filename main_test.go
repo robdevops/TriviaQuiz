@@ -1475,7 +1475,7 @@ func TestLobby(t *testing.T) {
 	c := connect(t, testServer(t, t.TempDir(), clk, &logs), model)
 	c.initializeWith(true, true, true)
 	r := c.quiz("20s", from(clk, chat, alice))
-	if !strings.Contains(words(r), "React to this message with any emoji to join.") || r.Meta == nil || !r.Meta.Watch.Reactions {
+	if !strings.Contains(words(r), "React to this message with any emoji to join.") || !strings.Contains(words(r), "You're in if you started it") || r.Meta == nil || !r.Meta.Watch.Reactions {
 		t.Fatalf("lobby intro %+v", r)
 	}
 	if p := c.outbox("0"); len(p.Ops) != 0 {
