@@ -265,6 +265,9 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 		q.End = q.End.Add(lobbyMax)
 		s.armLobby(q)
 	} else {
+		if !c.Group { // a DM: its one player, so no question waits for the timer
+			q.Players = []string{c.Sender}
+		}
 		s.arm(q)
 		// The question is a post of its own, so its answer can reply to it. It
 		// waits in the chat's mailbox behind this call's answer, the intro, so

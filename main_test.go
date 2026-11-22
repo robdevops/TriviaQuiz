@@ -1572,3 +1572,27 @@ func TestLobbyRestart(t *testing.T) {
 		t.Errorf("after a restart in the lobby %+v", p)
 	}
 }
+
+// In a DM the starter is the one player: a question ends as soon as they
+// answer, from question 1.
+func TestDMEndsEarly(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	dm := from(clk, "c_dm", alice)
+	dm.Group = false
+	c.quiz("1m", dm)
+	c.note()
+	page := c.outbox("0")
+	answer := from(clk, "c_dm", alice)
+	answer.Group = false
+	c.s.mu.Lock()
+	q := c.s.quizzes["c_dm"]
+	right := string(rune('A' + q.Questions[0].Answer))
+	c.s.mu.Unlock()
+	c.reply(right, answer)
+	clk.Advance(settle)
+	c.note()
+	if p := c.outbox(page.Cursor); len(p.Ops) == 0 || p.Ops[0].ReplyTo == "" {
+		t.Errorf("question 1 waited for its timer: %+v", p)
+	}
+}
