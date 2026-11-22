@@ -58,7 +58,7 @@ type quiz struct {
 	Answers   map[string]answer `json:"answers"`            // the open question's, by player
 	Players   []string          `json:"players"`            // who joined, or else who answered question 1: a question ends once they all have
 	Lobby     bool              `json:"lobby,omitempty"`    // waiting for players to join by reacting to the intro
-	Joined    []string          `json:"joined,omitempty"`   // who has joined, the starter first
+	Joined    []string          `json:"joined,omitempty"`   // who has joined
 	LastJoin  time.Time         `json:"lastJoin,omitempty"` // when the last player joined: the quiz starts lobbyWait after
 	CallOff   time.Time         `json:"callOff,omitempty"`  // when the lobby gives up with fewer than minPlayers
 	Seq       int               `json:"seq"`                // the answers recorded so far, to break ties

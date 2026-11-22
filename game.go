@@ -261,7 +261,7 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	s.quizzes[c.Chat] = q
 	s.remember(c.Chat, qs, now)
 	if c.Group && s.srv.WatchReactions() { // players join by reacting to the intro first
-		q.Lobby, q.Joined, q.CallOff = true, []string{c.Sender}, now.Add(lobbyMax)
+		q.Lobby, q.Joined, q.CallOff = true, nil, now.Add(lobbyMax)
 		q.End = q.End.Add(lobbyMax)
 		s.armLobby(q)
 	} else {
@@ -296,7 +296,7 @@ func intro(q *quiz) string {
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby {
-		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join.** You're in if you started it: the quiz starts 30 seconds after the next player joins, or after the last one if more join.\n%sA question ends as soon as everyone who joined has answered.",
+		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join**, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.\n%sA question ends as soon as everyone who joined has answered.",
 			title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
 	}
 	return fmt.Sprintf("%s · %d %s, %s each.\n%sFrom question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
@@ -622,7 +622,7 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 }
 
 // reacted is a reaction to the quiz's messages: in the lobby, a player
-// joining, or leaving if removed (the starter stays); after it, nothing.
+// joining, or leaving if removed; after it, nothing.
 func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 	if !fromChat(c) {
 		return addon.Text(noChat)
@@ -638,7 +638,7 @@ func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 	case !removed && !in:
 		q.Joined = append(q.Joined, c.Sender)
 		q.LastJoin = s.clock.Now()
-	case removed && in && c.Sender != q.Starter:
+	case removed && in:
 		q.Joined = slices.DeleteFunc(q.Joined, func(u string) bool { return u == c.Sender })
 	default:
 		s.mu.Unlock()

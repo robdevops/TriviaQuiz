@@ -1475,7 +1475,7 @@ func TestLobby(t *testing.T) {
 	c := connect(t, testServer(t, t.TempDir(), clk, &logs), model)
 	c.initializeWith(true, true, true)
 	r := c.quiz("20s", from(clk, chat, alice))
-	if !strings.Contains(words(r), "React to this message with any emoji to join.") || !strings.Contains(words(r), "You're in if you started it") || r.Meta == nil || !r.Meta.Watch.Reactions || !strings.HasSuffix(r.Meta.Watch.Over, "is over. Start another with /quiz.") {
+	if !strings.Contains(words(r), "React to this message with any emoji to join") || !strings.Contains(words(r), "whoever started it too") || r.Meta == nil || !r.Meta.Watch.Reactions || !strings.HasSuffix(r.Meta.Watch.Over, "is over. Start another with /quiz.") {
 		t.Fatalf("lobby intro %+v", r)
 	}
 	if p := c.outbox("0"); len(p.Ops) != 0 {
@@ -1483,6 +1483,11 @@ func TestLobby(t *testing.T) {
 	}
 	if rr := c.reply("D", from(clk, chat, bob)); recorded(rr) {
 		t.Errorf("an answer in the lobby: %+v", rr)
+	}
+	c.react(false, from(clk, chat, alice)) // the starter joins too, but alone doesn't start it
+	clk.Advance(lobbyWait)
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Fatalf("started with one player: %+v", p)
 	}
 	clk.Advance(10 * time.Second)
 	c.react(false, from(clk, chat, bob)) // 2 players: 30s to go
@@ -1527,8 +1532,9 @@ func TestLobbyOff(t *testing.T) {
 	c := connect(t, testServer(t, dir, clk, &logs), model)
 	c.initializeWith(true, true, true)
 	c.quiz("20s", from(clk, chat, alice))
+	c.react(false, from(clk, chat, alice))
 	c.react(false, from(clk, chat, bob))
-	c.react(true, from(clk, chat, bob)) // back to 1: no countdown
+	c.react(true, from(clk, chat, alice)) // the starter leaves: back to 1, no countdown
 	clk.Advance(time.Minute)
 	if p := c.outbox("0"); len(p.Ops) != 0 {
 		t.Fatalf("started with one player: %+v", p)
@@ -1561,6 +1567,7 @@ func TestLobbyRestart(t *testing.T) {
 	c := connect(t, testServer(t, dir, clk, &logs), model)
 	c.initializeWith(true, true, true)
 	c.quiz("20s", from(clk, chat, alice))
+	c.react(false, from(clk, chat, alice))
 	c.react(false, from(clk, chat, bob))
 	c.close()
 	clk = &fakeClock{now: clk.Now().Add(10 * time.Second)}

@@ -46,7 +46,7 @@ counts the cost against the chat's `DAILY_BUDGET`.
   so changing one gives nothing away.
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave). Whoever starts
-  it is in already, so one other player is enough. It starts 30 seconds
+  it must react too. It starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
   called off if fewer than 2 have joined after 5 minutes. Those who joined
   are the players every question waits for; anyone may still answer. On
