@@ -44,6 +44,14 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
+- **Joining.** In a group, the quiz starts with a lobby: react to its intro
+  with any emoji to join (take the reaction back to leave). It starts 30
+  seconds after the last player joins, once there are at least 2 of you,
+  and is called off if fewer than 2 have joined after 5 minutes; whoever
+  starts it has joined. In a DM it starts at once. Those who joined are the
+  players every question waits for; anyone may still answer. On Telegram
+  the bot sees reactions only as the group's admin; a bot older than
+  signalbot fe51891 starts the quiz at once.
 - **A pause to read the answer.** When a question ends, its answer comes as
   a reply to it, and the next question 5 seconds later, with its full time.
 - **No waiting once everyone's in.** Question 1 runs its full time; whoever

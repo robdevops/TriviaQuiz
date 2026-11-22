@@ -55,11 +55,15 @@ type quiz struct {
 	Post      string            `json:"post"`    // the outbox op that asked it, for the reveal to reply to
 	Opened    time.Time         `json:"opened"`  // when it opened
 	Deadline  time.Time         `json:"deadline"`
-	Answers   map[string]answer `json:"answers"` // the open question's, by player
-	Players   []string          `json:"players"` // who answered question 1: a later question ends once they all have
-	Seq       int               `json:"seq"`     // the answers recorded so far, to break ties
-	Points    map[string]int    `json:"points"`  // by player
-	Right     map[string]int    `json:"right"`   // questions right, by player
+	Answers   map[string]answer `json:"answers"`            // the open question's, by player
+	Players   []string          `json:"players"`            // who joined, or else who answered question 1: a question ends once they all have
+	Lobby     bool              `json:"lobby,omitempty"`    // waiting for players to join by reacting to the intro
+	Joined    []string          `json:"joined,omitempty"`   // who has joined, the starter first
+	LastJoin  time.Time         `json:"lastJoin,omitempty"` // when the last player joined: the quiz starts lobbyWait after
+	CallOff   time.Time         `json:"callOff,omitempty"`  // when the lobby gives up with fewer than minPlayers
+	Seq       int               `json:"seq"`                // the answers recorded so far, to break ties
+	Points    map[string]int    `json:"points"`             // by player
+	Right     map[string]int    `json:"right"`              // questions right, by player
 }
 
 // question is one question as played: its choices already shuffled.
@@ -121,6 +125,11 @@ const (
 	// gapTime is the pause between a question's answer and the next
 	// question, so players can read the answer.
 	gapTime = 5 * time.Second
+	// The lobby: how long after the last join the quiz starts, the players
+	// it needs, and how long it waits for them.
+	lobbyWait  = 30 * time.Second
+	minPlayers = 2
+	lobbyMax   = 5 * time.Minute
 )
 
 // newServer loads the state saved in cfg.StateDir, re-arms its quizzes'
@@ -167,6 +176,10 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 			q.Right = map[string]int{}
 		}
 		s.quizzes[q.Chat] = q
+		if q.Lobby {
+			s.armLobby(q)
+			continue
+		}
 		if q.Post == "" { // its question wasn't asked yet: ask it, with its full time
 			if late := s.clock.Now().Sub(q.Opened); late > 0 {
 				q.Opened, q.Deadline = q.Opened.Add(late), q.Deadline.Add(late)

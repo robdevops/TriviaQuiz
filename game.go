@@ -85,10 +85,15 @@ func (s *server) tools() []addon.Tool {
 			Visibility:  []string{"bot"},
 			Call: func(_ context.Context, c *addon.Context, raw json.RawMessage) (addon.Result, error) {
 				var a struct {
-					Text string `json:"text"`
+					Text     string `json:"text"`
+					Reaction string `json:"reaction"` // a reaction to the quiz's messages: a join, in the lobby
+					Removed  bool   `json:"removed"`
 				}
 				if err := addon.DecodeArgs(raw, &a); err != nil {
 					return addon.Result{}, err
+				}
+				if a.Reaction != "" {
+					return s.reacted(c, a.Removed), nil
 				}
 				return s.answer(c, a.Text), nil
 			},
@@ -255,11 +260,17 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	}
 	s.quizzes[c.Chat] = q
 	s.remember(c.Chat, qs, now)
-	s.arm(q)
-	// The question is a post of its own, so its answer can reply to it. It
-	// waits in the chat's mailbox behind this call's answer, the intro, so
-	// it always comes second, once the watch that takes its replies is on.
-	q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
+	if c.Group && s.srv.WatchReactions() { // players join by reacting to the intro first
+		q.Lobby, q.Joined, q.CallOff = true, []string{c.Sender}, now.Add(lobbyMax)
+		q.End = q.End.Add(lobbyMax)
+		s.armLobby(q)
+	} else {
+		s.arm(q)
+		// The question is a post of its own, so its answer can reply to it. It
+		// waits in the chat's mailbox behind this call's answer, the intro, so
+		// it always comes second, once the watch that takes its replies is on.
+		q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
+	}
 	text := intro(q)
 	s.mu.Unlock()
 	s.save()
@@ -268,7 +279,7 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	return addon.Result{
 		Content: addon.Text(clamp(text, maxPost)).Content,
 		Meta: &addon.ResultMeta{Watch: &addon.Watch{
-			ID: q.ID, Replies: true, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer",
+			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer",
 		}},
 	}
 }
@@ -280,8 +291,13 @@ func intro(q *quiz) string {
 	if q.Topic != "" {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
-	return fmt.Sprintf("%s · %d %s, %s each.\nAnswer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. From question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
-		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time))
+	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
+	if q.Lobby {
+		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join.** The quiz starts 30 seconds after the last player joins, once there are at least %d of you.\n%sA question ends as soon as everyone who joined has answered.",
+			title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), minPlayers, how)
+	}
+	return fmt.Sprintf("%s · %d %s, %s each.\n%sFrom question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
+		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
 }
 
 // questionText is the open question, with its choices, and how to answer
@@ -345,7 +361,7 @@ func (s *server) timeUp(chat, id string, current int) {
 // only the time the watch has left. s.mu is held.
 func (s *server) revealLocked(q *quiz) {
 	now := s.clock.Now()
-	if q.Current == 0 {
+	if q.Current == 0 && len(q.Players) == 0 { // no lobby: question 1's players are the quiz's
 		q.Players = slices.Sorted(maps.Keys(q.Answers))
 	}
 	revealed := s.mark(q)
@@ -474,6 +490,11 @@ func (s *server) finish(c *addon.Context) addon.Result {
 	case q.Starter != c.Sender:
 		s.mu.Unlock()
 		return addon.Text("Only the player who started this quiz can end it.")
+	case q.Lobby:
+		s.callOffLocked(q, "")
+		s.mu.Unlock()
+		s.save()
+		return addon.Text("The quiz is off.")
 	}
 	revealed := ""
 	if q.Post != "" { // the open question was asked: reveal it first
@@ -554,6 +575,9 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 	case q == nil:
 		s.mu.Unlock()
 		return addon.Text(noQuiz)
+	case q.Lobby:
+		s.mu.Unlock()
+		return addon.Text("The quiz hasn't started yet.")
 	case c.Sent > 0 && c.Sent < q.Started.Unix():
 		s.mu.Unlock()
 		return addon.Text("That message is from before this quiz.")
@@ -594,11 +618,100 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 	return addon.Text("Recorded.")
 }
 
+// reacted is a reaction to the quiz's messages: in the lobby, a player
+// joining, or leaving if removed (the starter stays); after it, nothing.
+func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
+	if !fromChat(c) {
+		return addon.Text(noChat)
+	}
+	s.mu.Lock()
+	q := s.quizzes[c.Chat]
+	if q == nil || !q.Lobby {
+		s.mu.Unlock()
+		return addon.Text("Noted.")
+	}
+	in := slices.Contains(q.Joined, c.Sender)
+	switch {
+	case !removed && !in:
+		q.Joined = append(q.Joined, c.Sender)
+		q.LastJoin = s.clock.Now()
+	case removed && in && c.Sender != q.Starter:
+		q.Joined = slices.DeleteFunc(q.Joined, func(u string) bool { return u == c.Sender })
+	default:
+		s.mu.Unlock()
+		return addon.Text("Noted.")
+	}
+	s.armLobby(q)
+	s.mu.Unlock()
+	s.save()
+	return addon.Text("Noted.")
+}
+
+// armLobby sets q's lobby timer: with enough players, to start lobbyWait
+// after the last join; else to call the quiz off at CallOff. s.mu is held.
+func (s *server) armLobby(q *quiz) {
+	at := q.CallOff
+	if len(q.Joined) >= minPlayers {
+		at = q.LastJoin.Add(lobbyWait)
+	}
+	chat, id := q.Chat, q.ID
+	if t := s.timers[chat]; t != nil {
+		t.Stop()
+	}
+	s.timers[chat] = s.clock.AfterFunc(max(at.Sub(s.clock.Now()), 0), func() {
+		s.mu.Lock()
+		q := s.quizzes[chat]
+		if q == nil || q.ID != id || !q.Lobby {
+			s.mu.Unlock()
+			return
+		}
+		now := s.clock.Now()
+		switch {
+		case len(q.Joined) >= minPlayers && !now.Before(q.LastJoin.Add(lobbyWait)):
+			s.beginLocked(q)
+		case len(q.Joined) < minPlayers && !now.Before(q.CallOff):
+			s.callOffLocked(q, "Not enough players joined, so the quiz is off.")
+		default:
+			s.armLobby(q)
+		}
+		s.mu.Unlock()
+		s.save()
+	})
+}
+
+// beginLocked ends q's lobby: its players are those who joined, and
+// question 1 opens now. s.mu is held.
+func (s *server) beginLocked(q *quiz) {
+	now := s.clock.Now()
+	q.Lobby, q.Players = false, slices.Clone(q.Joined)
+	q.Started, q.Opened, q.Deadline = now, now, now.Add(q.Time)
+	s.arm(q)
+	s.askLocked(q)
+	s.log.Printf("quiz %s began: %d players", q.ID, len(q.Players))
+}
+
+// callOffLocked ends q in its lobby, saying why if why isn't "", and ends
+// its watch. s.mu is held.
+func (s *server) callOffLocked(q *quiz, why string) {
+	if why != "" {
+		s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: why})
+	}
+	s.queue(addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
+	delete(s.quizzes, q.Chat)
+	for _, m := range []map[string]stopper{s.timers, s.asks} {
+		if t := m[q.Chat]; t != nil {
+			t.Stop()
+			delete(m, q.Chat)
+		}
+	}
+	s.log.Printf("quiz %s called off in its lobby: %d joined", q.ID, len(q.Joined))
+}
+
 // allAnswered reports whether a question after the first has an answer
 // from each player of question 1, and is still before its deadline. s.mu
 // is held.
 func (s *server) allAnswered(q *quiz) bool {
-	if q.Current == 0 || len(q.Players) == 0 || !s.clock.Now().Before(q.Deadline) {
+	if len(q.Players) == 0 || !s.clock.Now().Before(q.Deadline) { // none yet, before the end of question 1, without a lobby
 		return false
 	}
 	for _, p := range q.Players {

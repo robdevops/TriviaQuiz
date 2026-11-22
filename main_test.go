@@ -374,7 +374,14 @@ func (c *client) result(method string, params any, v any) {
 // as asked, and its subscription to the outbox.
 func (c *client) initialize(sampling, replies bool) {
 	c.t.Helper()
-	caps := map[string]any{"experimental": map[string]any{vendor + "addon": map[string]any{"version": 1, "network": "signal", "watchReplies": replies}}}
+	c.initializeWith(sampling, replies, false)
+}
+
+// initializeWith is initialize, offering reactions on a watch too, as a
+// bot at signalbot fe51891 does.
+func (c *client) initializeWith(sampling, replies, reactions bool) {
+	c.t.Helper()
+	caps := map[string]any{"experimental": map[string]any{vendor + "addon": map[string]any{"version": 1, "network": "signal", "watchReplies": replies, "watchReactions": reactions}}}
 	if sampling {
 		caps["sampling"] = map[string]any{}
 	}
@@ -407,6 +414,16 @@ func (c *client) tool(name string, args map[string]string, ctx callContext) tool
 func (c *client) quiz(args string, ctx callContext) toolResult {
 	c.t.Helper()
 	return c.tool("quiz", map[string]string{"args": args}, ctx)
+}
+
+// react is a reaction to the quiz's messages, as the bot passes it.
+func (c *client) react(removed bool, ctx callContext) {
+	c.t.Helper()
+	var r toolResult
+	c.result("tools/call", map[string]any{
+		"name": "quiz_answer", "arguments": map[string]any{"reaction": "👍", "removed": removed},
+		"_meta": map[string]any{vendor + "context": ctx},
+	}, &r)
 }
 
 func (c *client) reply(text string, ctx callContext) toolResult {
@@ -1444,4 +1461,114 @@ func TestGapRestart(t *testing.T) {
 		t.Errorf("question 2's time: %s left", q.Deadline.Sub(clk.Now()))
 	}
 	c.s.mu.Unlock()
+}
+
+// In a group, with a bot that passes reactions, players join by reacting
+// to the intro: the quiz starts lobbyWait after the last join once there
+// are minPlayers, a join re-arms the countdown, a leave below minPlayers
+// stops it, and the joined are the players a question waits for.
+func TestLobby(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	var logs syncBuffer
+	model := &fakeModel{}
+	model.add(asJSON(capital, peak, planet))
+	c := connect(t, testServer(t, t.TempDir(), clk, &logs), model)
+	c.initializeWith(true, true, true)
+	r := c.quiz("20s", from(clk, chat, alice))
+	if !strings.Contains(words(r), "React to this message with any emoji to join.") || r.Meta == nil || !r.Meta.Watch.Reactions {
+		t.Fatalf("lobby intro %+v", r)
+	}
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Fatalf("a question before the lobby ended: %+v", p)
+	}
+	if rr := c.reply("D", from(clk, chat, bob)); recorded(rr) {
+		t.Errorf("an answer in the lobby: %+v", rr)
+	}
+	clk.Advance(10 * time.Second)
+	c.react(false, from(clk, chat, bob)) // 2 players: 30s to go
+	clk.Advance(20 * time.Second)
+	c.react(false, from(clk, chat, "u_carol")) // re-arms
+	clk.Advance(20 * time.Second)
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Fatalf("started before 30s after the last join: %+v", p)
+	}
+	c.react(true, from(clk, chat, "u_carol")) // leaves; still 2
+	clk.Advance(10 * time.Second)
+	c.note()
+	page := c.outbox("0")
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
+		t.Fatalf("question 1 %+v", page)
+	}
+	c.s.mu.Lock()
+	if p := c.s.quizzes[chat].Players; !slices.Equal(p, []string{alice, bob}) {
+		t.Errorf("players %v", p)
+	}
+	c.s.mu.Unlock()
+	// Question 1 ends as soon as both have answered.
+	c.reply(letterOf(t, c, "Canberra"), from(clk, chat, alice))
+	c.reply(letterOf(t, c, "Canberra"), from(clk, chat, bob))
+	clk.Advance(settle)
+	c.note()
+	if p := c.outbox(page.Cursor); len(p.Ops) < 1 || p.Ops[0].ReplyTo == "" {
+		t.Errorf("question 1 didn't end early: %+v", p)
+	}
+	c.react(false, from(clk, chat, "u_carol")) // a reaction during play: nothing
+}
+
+// Fewer than minPlayers after lobbyMax calls the quiz off; a leave below
+// minPlayers stops the countdown; /quiz end in the lobby calls it off; a DM
+// and an old bot start at once.
+func TestLobbyOff(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	var logs syncBuffer
+	model := &fakeModel{}
+	model.add(asJSON(capital, peak, planet), asJSON(landing, element, capital), asJSON(peak, planet, landing))
+	dir := t.TempDir()
+	c := connect(t, testServer(t, dir, clk, &logs), model)
+	c.initializeWith(true, true, true)
+	c.quiz("20s", from(clk, chat, alice))
+	c.react(false, from(clk, chat, bob))
+	c.react(true, from(clk, chat, bob)) // back to 1: no countdown
+	clk.Advance(time.Minute)
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Fatalf("started with one player: %+v", p)
+	}
+	clk.Advance(lobbyMax)
+	c.note()
+	page := c.outbox("0")
+	if len(page.Ops) != 2 || page.Ops[0].Text != "Not enough players joined, so the quiz is off." || page.Ops[1].Op != "unwatch" {
+		t.Fatalf("call-off %+v", page)
+	}
+
+	c.quiz("20s", from(clk, "c_two", alice))
+	if got := words(c.quiz("end", from(clk, "c_two", alice))); got != "The quiz is off." {
+		t.Errorf("end in the lobby %q", got)
+	}
+	dm := from(clk, "c_dm", alice)
+	dm.Group = false
+	if got := words(c.quiz("20s", dm)); strings.Contains(got, "React to") {
+		t.Errorf("a DM has a lobby: %q", got)
+	}
+}
+
+// A restart in the lobby keeps who joined, and the countdown.
+func TestLobbyRestart(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	var logs syncBuffer
+	model := &fakeModel{}
+	model.add(asJSON(capital, peak, planet))
+	dir := t.TempDir()
+	c := connect(t, testServer(t, dir, clk, &logs), model)
+	c.initializeWith(true, true, true)
+	c.quiz("20s", from(clk, chat, alice))
+	c.react(false, from(clk, chat, bob))
+	c.close()
+	clk = &fakeClock{now: clk.Now().Add(10 * time.Second)}
+	c = connect(t, testServer(t, dir, clk, &logs), nil)
+	c.initializeWith(false, true, true)
+	clk.Advance(20 * time.Second)
+	c.note()
+	if p := c.outbox("old.1"); len(p.Ops) == 0 || !strings.HasPrefix(p.Ops[len(p.Ops)-1].Text, "**Question 1 of 3**") {
+		t.Errorf("after a restart in the lobby %+v", p)
+	}
 }

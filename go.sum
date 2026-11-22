@@ -2,6 +2,8 @@ github.com/robdevops/signalbot v0.0.0-20261121023734-7e5ff71d32eb h1:ukXdlpAHEVX
 github.com/robdevops/signalbot v0.0.0-20261121023734-7e5ff71d32eb/go.mod h1:QqCNFRyXzUqgOirHTVsoyfLS5r+o9U5b2KABCDR6Ex8=
 github.com/robdevops/signalbot v0.0.0-20261121040230-f5a542f095fb h1:HSG3C67dOV30XXRF8f6V2w4Ic/1zVG/IvRRqoericX4=
 github.com/robdevops/signalbot v0.0.0-20261121040230-f5a542f095fb/go.mod h1:QqCNFRyXzUqgOirHTVsoyfLS5r+o9U5b2KABCDR6Ex8=
+github.com/robdevops/signalbot v0.0.0-20261122060408-fe518917ad74 h1:eAWQj9wRDIZyVtKL02YSIWlqvJqCcTs2h5BYWFl/4N4=
+github.com/robdevops/signalbot v0.0.0-20261122060408-fe518917ad74/go.mod h1:QqCNFRyXzUqgOirHTVsoyfLS5r+o9U5b2KABCDR6Ex8=
 golang.org/x/image v0.47.0 h1:za/8gVz++PPZqmZJBNSISICN5Rrj5zixP/8K++fgmqo=
 golang.org/x/image v0.47.0/go.mod h1:IkN5o4A7vq55vXN8FWjjnhg9Rs2GOtffqsSi9mWAKYE=
 golang.org/x/net v0.61.0 h1:RR+6j/BTBCrggOLugxa+66R8FvoN6MHlzDlZIbN9YFw=
