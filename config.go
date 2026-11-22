@@ -23,6 +23,7 @@ type config struct {
 	Difficulty string        // QUIZ_DIFFICULTY: medium (the default), mixed, easy or hard
 	MaxTokens  int           // QUIZ_MAX_TOKENS: the most the model may write for one quiz
 	MemLimit   int64         // QUIZ_MEMLIMIT, in bytes
+	gap        time.Duration // between a question's answer and the next: gapTime, not a setting; 0 in most tests
 }
 
 // The limits of a quiz, and the defaults of the settings.
@@ -57,6 +58,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 		Language:   cmp.Or(strings.TrimSpace(getenv("QUIZ_LANGUAGE")), defaultLanguage),
 		Difficulty: cmp.Or(strings.ToLower(strings.TrimSpace(getenv("QUIZ_DIFFICULTY"))), "medium"),
 		MaxTokens:  defaultMaxTokens,
+		gap:        gapTime,
 	}
 	var errs []error
 	if c.StateDir == "" {

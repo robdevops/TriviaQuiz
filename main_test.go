@@ -190,6 +190,9 @@ func testServer(t *testing.T, dir string, clk clock, logs io.Writer, env ...stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	if vars["gap"] == "" {
+		cfg.gap = 0 // questions asked at once; TestGap has the pause
+	}
 	s, err := newServer(cfg, clk, mrand.New(mrand.NewPCG(1, 2)), log.New(logs, "", 0))
 	if err != nil {
 		t.Fatal(err)
@@ -1365,4 +1368,80 @@ func TestNoEarlyEndWithoutPlayers(t *testing.T) {
 	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
 		t.Fatalf("question 2 ended early with no players: %+v", p)
 	}
+}
+
+// With the pause, a question's answer goes out at once and the next
+// question 5s later, with its full time; a reply in between isn't
+// recorded; /quiz end in the pause reveals nothing more; a restart in the
+// pause still asks the question.
+func TestGap(t *testing.T) {
+	clk, c, model, _ := begin(t, "gap", "on")
+	model.add(asJSON(capital, peak, planet))
+	began := clk.Now()
+	r := c.quiz("20s", from(clk, chat, alice))
+	if w := r.Meta.Watch; w.Until != began.Add(3*(20*time.Second+settle)+2*gapTime+watchSlack).Format(time.RFC3339) {
+		t.Errorf("watch until %s", w.Until)
+	}
+	c.note()
+	page := c.outbox("0")
+	c.reply(letterOf(t, c, "Canberra"), from(clk, chat, alice))
+	clk.Advance(20*time.Second + settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || page.Ops[0].ReplyTo == "" {
+		t.Fatalf("the answer alone %+v", page)
+	}
+	if rr := c.reply("Everest", from(clk, chat, bob)); recorded(rr) {
+		t.Errorf("a reply in the pause counted: %+v", rr)
+	}
+	clk.Advance(gapTime)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 2 of 3** · medium · 20s\n") {
+		t.Fatalf("question 2 %+v", page)
+	}
+	clk.Advance(19 * time.Second) // its time runs from when it was asked
+	if rr := c.reply("Everest", from(clk, chat, bob)); !recorded(rr) {
+		t.Errorf("an answer in question 2's time: %+v", rr)
+	}
+	clk.Advance(time.Second + settle) // question 2 ends; question 3 is in its pause
+	c.note()
+	page = c.outbox(page.Cursor)
+	if got := words(c.quiz("end", from(clk, chat, alice))); strings.Contains(got, "Question 3") || strings.Contains(got, "Nobody got it") || !strings.HasPrefix(got, "🏁 **Quiz over**") {
+		t.Errorf("an end in the pause: %q", got)
+	}
+	clk.Advance(gapTime)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 1 || p.Ops[0].Op != "unwatch" {
+		t.Errorf("after an end in the pause %+v", p)
+	}
+}
+
+// A restart in the pause still asks the next question, with its full time.
+func TestGapRestart(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	dir := t.TempDir()
+	var logs syncBuffer
+	model := &fakeModel{}
+	model.add(asJSON(capital, peak, planet))
+	c := connect(t, testServer(t, dir, clk, &logs, "gap", "on"), model)
+	c.initialize(true, true)
+	c.quiz("3 20s", from(clk, chat, alice))
+	clk.Advance(20*time.Second + settle) // question 1 ends; question 2 is in its pause
+	c.note()
+	c.close()
+
+	clk = &fakeClock{now: clk.Now().Add(time.Minute)}
+	c = connect(t, testServer(t, dir, clk, &logs, "gap", "on"), nil)
+	c.initialize(false, false)
+	c.note()
+	page := c.outbox("old.9")
+	last := page.Ops[len(page.Ops)-1]
+	if !strings.HasPrefix(last.Text, "**Question 2 of 3** · medium · 20s\n") {
+		t.Fatalf("after a restart in the pause %+v", page)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; q.Deadline.Sub(clk.Now()) != 20*time.Second {
+		t.Errorf("question 2's time: %s left", q.Deadline.Sub(clk.Now()))
+	}
+	c.s.mu.Unlock()
 }

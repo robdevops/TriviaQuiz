@@ -44,6 +44,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
+- **A pause to read the answer.** When a question ends, its answer comes as
+  a reply to it, and the next question 5 seconds later, with its full time.
 - **No waiting once everyone's in.** Question 1 runs its full time; whoever
   answers it is playing. From question 2 on, a question ends as soon as all
   of them have answered (3s later, for answers still on their way), so a
@@ -234,7 +236,7 @@ The quiz adds:
   question's time is up (3s after its deadline, for answers still in the
   bot's queue), it queues the answer and explanation, with who got it right
   as `{u_…}` placeholders, as a post with `replyTo` the question's post,
-  then the next question as a new post. After the last, the results follow
+  then, 5 seconds later, the next question as a new post. After the last, the results follow
   as a new post, then an `unwatch`.
   `/quiz end` answers with the open question's answer and the results itself
   and queues only the `unwatch`. Every post stays under the bot's 4000

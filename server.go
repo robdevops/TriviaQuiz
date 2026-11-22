@@ -31,6 +31,8 @@ type server struct {
 	mu      sync.Mutex
 	quizzes map[string]*quiz   // by chat
 	timers  map[string]stopper // each quiz's, by chat
+	asks    map[string]stopper // each quiz's next question, posted after the gap, by chat
+	gap     time.Duration      // between a question's answer and the next question: gapTime, or 0 in most tests
 	writing map[string]bool    // chats whose quiz the model is writing
 	scores  map[string][]score // by chat, the last scoreDays days
 	asked   map[string][]stamp // by chat, the questions of the last askedDays days
@@ -116,6 +118,9 @@ const (
 	// lateSlack is how late a timer may fire before the next question no
 	// longer fits within the watch.
 	lateSlack = 5 * time.Second
+	// gapTime is the pause between a question's answer and the next
+	// question, so players can read the answer.
+	gapTime = 5 * time.Second
 )
 
 // newServer loads the state saved in cfg.StateDir, re-arms its quizzes'
@@ -128,6 +133,8 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		slot:    make(chan struct{}, 1),
 		quizzes: map[string]*quiz{},
 		timers:  map[string]stopper{},
+		asks:    map[string]stopper{},
+		gap:     cfg.gap,
 		writing: map[string]bool{},
 		scores:  map[string][]score{},
 		asked:   map[string][]stamp{},
@@ -160,6 +167,14 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 			q.Right = map[string]int{}
 		}
 		s.quizzes[q.Chat] = q
+		if q.Post == "" { // its question wasn't asked yet: ask it, with its full time
+			if late := s.clock.Now().Sub(q.Opened); late > 0 {
+				q.Opened, q.Deadline = q.Opened.Add(late), q.Deadline.Add(late)
+			}
+			s.scheduleAsk(q)
+			s.arm(q)
+			continue
+		}
 		if !s.clock.Now().Before(q.Deadline.Add(settle)) {
 			s.revealLocked(q)
 			revealed++

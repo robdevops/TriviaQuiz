@@ -249,7 +249,7 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	q := &quiz{
 		ID: "q" + randomID(6), Chat: c.Chat, Starter: c.Sender, Topic: topic,
 		Questions: qs, Time: length,
-		Started: now, End: now.Add(time.Duration(len(qs)) * (length + settle)),
+		Started: now, End: now.Add(time.Duration(len(qs))*(length+settle) + time.Duration(len(qs)-1)*s.gap),
 		Opened: now, Deadline: now.Add(length),
 		Answers: map[string]answer{}, Points: map[string]int{}, Right: map[string]int{},
 	}
@@ -350,11 +350,14 @@ func (s *server) revealLocked(q *quiz) {
 	}
 	revealed := s.mark(q)
 	next := q.Current + 1
-	length := min(q.Time, q.End.Add(lateSlack).Sub(now)-settle)
+	length := min(q.Time, q.End.Add(lateSlack).Sub(now)-s.gap-settle)
 	if next < len(q.Questions) && length >= minTime {
-		q.Current, q.Opened, q.Deadline, q.Answers = next, now, now.Add(length), map[string]answer{}
+		s.queue(s.reply(q, revealed))
+		// The next question opens after the gap, with its full time.
+		opens := now.Add(s.gap)
+		q.Current, q.Opened, q.Deadline, q.Answers, q.Post = next, opens, opens.Add(length), map[string]answer{}, ""
 		s.arm(q)
-		q.Post = s.queue(s.reply(q, revealed), addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[1]
+		s.scheduleAsk(q)
 		return
 	}
 	if next < len(q.Questions) {
@@ -362,6 +365,39 @@ func (s *server) revealLocked(q *quiz) {
 	}
 	results := s.end(q, now)
 	s.queue(s.reply(q, revealed), addon.Op{Op: "post", Chat: q.Chat, Text: clamp(results, maxPost)}, addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
+}
+
+// scheduleAsk posts q's open question when it opens: at once if it has,
+// else by a timer. s.mu is held.
+func (s *server) scheduleAsk(q *quiz) {
+	if t := s.asks[q.Chat]; t != nil {
+		t.Stop()
+		delete(s.asks, q.Chat)
+	}
+	wait := q.Opened.Sub(s.clock.Now())
+	if wait <= 0 {
+		s.askLocked(q)
+		return
+	}
+	chat, id, current := q.Chat, q.ID, q.Current
+	s.asks[chat] = s.clock.AfterFunc(wait, func() {
+		s.mu.Lock()
+		q := s.quizzes[chat]
+		if q == nil || q.ID != id || q.Current != current || q.Post != "" {
+			s.mu.Unlock()
+			return
+		}
+		delete(s.asks, chat)
+		s.askLocked(q)
+		s.mu.Unlock()
+		s.save()
+	})
+}
+
+// askLocked posts q's open question, which its answer will reply to. s.mu
+// is held.
+func (s *server) askLocked(q *quiz) {
+	q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
 }
 
 // reply is the post of a question's answer, as a reply to the question.
@@ -439,21 +475,26 @@ func (s *server) finish(c *addon.Context) addon.Result {
 		s.mu.Unlock()
 		return addon.Text("Only the player who started this quiz can end it.")
 	}
-	revealed := s.mark(q)
-	results := s.end(q, s.clock.Now())
+	revealed := ""
+	if q.Post != "" { // the open question was asked: reveal it first
+		revealed = s.mark(q) + "\n\n"
+	}
+	text := revealed + s.end(q, s.clock.Now())
 	s.queue(addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
 	s.mu.Unlock()
 	s.save()
-	return addon.Text(clamp(revealed+"\n\n"+results, maxPost))
+	return addon.Text(clamp(text, maxPost))
 }
 
 // end closes q, adding its points to the chat's scores, and returns its
 // results. s.mu is held.
 func (s *server) end(q *quiz, now time.Time) string {
 	delete(s.quizzes, q.Chat)
-	if t := s.timers[q.Chat]; t != nil {
-		t.Stop()
-		delete(s.timers, q.Chat)
+	for _, m := range []map[string]stopper{s.timers, s.asks} {
+		if t := m[q.Chat]; t != nil {
+			t.Stop()
+			delete(m, q.Chat)
+		}
 	}
 	type placing struct {
 		user          string
