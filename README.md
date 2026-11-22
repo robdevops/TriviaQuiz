@@ -12,7 +12,7 @@ scoreboard.
 /quiz                      a quiz of general knowledge (QUIZ_QUESTIONS questions of QUIZ_TIME, default 5 of 30s)
 /quiz 80s music            a quiz on a topic, up to 60 characters
 /quiz 80s music 5 45s      with a number of questions (1 to 10) and a time for each (10s to 2m), at the end, in either order
-/quiz end                  finish now: the open question's answer and the results (only the player who started it)
+/quiz end, /quiz stop      finish now: the open question's answer and the results (only the player who started it)
 /quiz scores               this chat's totals over the last 7 days
 ```
 

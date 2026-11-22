@@ -779,7 +779,7 @@ func TestLateAndEdited(t *testing.T) {
 // question and the results at once, and queues the unwatch alone.
 func TestEnd(t *testing.T) {
 	clk, c, model, _ := begin(t)
-	if got := words(c.quiz("end", from(clk, chat, alice))); got != noQuiz {
+	if got := words(c.quiz("stop", from(clk, chat, alice))); got != noQuiz {
 		t.Errorf("end with no quiz: %q", got)
 	}
 	model.add(asJSON(capital, peak, planet))

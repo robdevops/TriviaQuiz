@@ -114,7 +114,7 @@ func (s *server) command(ctx context.Context, c *addon.Context, args string) add
 	fields := strings.Fields(args)
 	if len(fields) == 1 {
 		switch strings.ToLower(fields[0]) {
-		case "end":
+		case "end", "stop":
 			return s.finish(c)
 		case "scores":
 			return addon.Text(s.scoreboard(c.Chat))
