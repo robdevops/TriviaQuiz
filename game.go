@@ -282,7 +282,7 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	return addon.Result{
 		Content: addon.Text(clamp(text, maxPost)).Content,
 		Meta: &addon.ResultMeta{Watch: &addon.Watch{
-			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer",
+			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer", Over: "That quiz is over. Start another with /quiz.",
 		}},
 	}
 }
