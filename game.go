@@ -609,9 +609,6 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 	}
 	q.Seq++
 	q.Answers[c.Sender] = answer{Right: right, At: at, Seq: q.Seq}
-	if len(q.Players) > 0 && !slices.Contains(q.Players, c.Sender) {
-		q.Players = append(q.Players, c.Sender) // whoever answers is waited for from the next one on
-	}
 	if s.allAnswered(q) {
 		// Everyone playing has answered: end the question now, revealing it
 		// after settle, as at its deadline, for answers still on their way.
