@@ -51,16 +51,16 @@ Go 1.27 or newer.
    ```
 
 2. **Add it to the MCP servers file** (`MCP_CONFIG`). It must be called
-   `quiz`. Put your group IDs in `chats`, or `["all"]`; add `"dms": true`
-   to play in DMs too. The `model` permission is essential: the bot's
-   model writes the questions.
+   `quiz`. `chats: ["all"]` plays in every group; list group IDs to limit
+   it, and add `"dms": true` to play in DMs too. The `model` permission
+   is essential: the bot's model writes the questions.
 
    ```jsonc
    "quiz": {
      "command": "/opt/signalbot-addons/quiz",
      "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
      "addon": {
-       "chats": ["<group id>"],
+       "chats": ["all"],
        "post": true, "watch": true,
        "model": {"per_hour": 30, "max_tokens": 4000}
      }

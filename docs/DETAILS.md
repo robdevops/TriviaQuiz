@@ -92,7 +92,7 @@ which is what gives it the `QUIZ_` settings below:
   "command": "/opt/signalbot-addons/quiz",
   "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
   "addon": {
-    "chats": ["<group id>"],
+    "chats": ["all"],
     "post": true, "watch": true,
     "model": {"per_hour": 30, "max_tokens": 4000}
   }
