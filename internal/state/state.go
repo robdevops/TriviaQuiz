@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/robdevops/chat-plugin-quiz/internal/fsx"
+	"github.com/robdevops/TriviaQuiz/internal/fsx"
 )
 
 // MaxBytes caps one saved document, its final newline included, so a

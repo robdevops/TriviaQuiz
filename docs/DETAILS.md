@@ -1,4 +1,4 @@
-# Quiz: details
+# TriviaQuiz: details
 
 The fine print behind the [README](../README.md): how the quiz works, how
 to set it up, and what it keeps.
@@ -70,8 +70,8 @@ static binary, which the Docker image needs (it has no shell or runtimes)
 and systemd is happy with:
 
 ```
-git clone https://github.com/robdevops/chat-plugin-quiz.git
-cd chat-plugin-quiz
+git clone https://github.com/robdevops/TriviaQuiz.git
+cd TriviaQuiz
 CGO_ENABLED=0 go build -ldflags='-s -w' -o /tmp/quiz . && sudo install -D -m 755 /tmp/quiz /opt/signalbot-addons/quiz
 ```
 

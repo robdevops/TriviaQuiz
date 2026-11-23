@@ -1,4 +1,4 @@
-module github.com/robdevops/chat-plugin-quiz
+module github.com/robdevops/TriviaQuiz
 
 go 1.27.0
 

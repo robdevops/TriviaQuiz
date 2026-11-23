@@ -1,4 +1,4 @@
-# Quiz
+# TriviaQuiz
 
 A trivia quiz for [signalbot](https://github.com/robdevops/signalbot).
 `/quiz` has the bot's own model write a few questions on a topic. Some are
@@ -45,8 +45,8 @@ Go 1.27 or newer.
 1. **Build it:**
 
    ```
-   git clone https://github.com/robdevops/chat-plugin-quiz.git
-   cd chat-plugin-quiz
+   git clone https://github.com/robdevops/TriviaQuiz.git
+   cd TriviaQuiz
    CGO_ENABLED=0 go build -ldflags='-s -w' -o /tmp/quiz . && sudo install -D -m 755 /tmp/quiz /opt/signalbot-addons/quiz
    ```
 

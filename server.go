@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robdevops/chat-plugin-quiz/internal/state"
+	"github.com/robdevops/TriviaQuiz/internal/state"
 	"github.com/robdevops/signalbot/addon"
 )
 
