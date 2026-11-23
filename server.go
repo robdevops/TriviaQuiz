@@ -129,7 +129,7 @@ const (
 	// it needs, and how long it waits for them.
 	lobbyWait  = 30 * time.Second
 	minPlayers = 2
-	lobbyMax   = 5 * time.Minute
+	lobbyMax   = 15 * time.Minute
 )
 
 // newServer loads the state saved in cfg.StateDir, re-arms its quizzes'

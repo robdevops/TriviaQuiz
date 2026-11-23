@@ -19,7 +19,7 @@ the players and keeps a 7-day scoreboard.
 - **Joining.** In a group, react to the quiz's intro with any emoji to
   join. Whoever starts it must react too. It needs at least 2 players.
   It starts 30 seconds after the last one joins, and is called off if
-  fewer than 2 have joined after 5 minutes. On Telegram the bot sees
+  fewer than 2 have joined after 15 minutes. On Telegram the bot sees
   reactions only as a group admin.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you
   send is an answer.

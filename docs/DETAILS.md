@@ -37,7 +37,7 @@ counts the cost against the chat's `DAILY_BUDGET`.
   with any emoji to join (take the reaction back to leave). Whoever starts
   it must react too. It starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
-  called off if fewer than 2 have joined after 5 minutes. Those who joined
+  called off if fewer than 2 have joined after 15 minutes. Those who joined
   are the players every question waits for; anyone may still answer. On
   Telegram the bot sees reactions only as the group's admin. In a DM there
   is no lobby: the quiz starts at once.
@@ -112,7 +112,7 @@ add `"dms": true` to play in DMs too. The quiz needs:
   per question fit the default rate;
 - `watch`, to read the replies, and the reactions that join a lobby. A quiz
   is at most 10 questions of 2 minutes, never over 30 minutes, and its
-  watch allows 5 more for a lobby, so the default `watch_max` of 1h is
+  watch allows 15 more for a lobby, so the default `watch_max` of 1h is
   enough.
 
 `"timeout": "90s"` gives the model time to write the quiz. The quiz gives up
