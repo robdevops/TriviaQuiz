@@ -24,7 +24,6 @@ const (
 	needsModel = "The quiz needs the bot's model: give the quiz addon the model permission."
 	writing    = "A quiz is being written for this chat; give it a moment."
 	slotBusy   = "Another chat's quiz is being written. Try again in a minute."
-	slotHeld   = "The bot's model is still finishing an earlier request. Try again in a couple of minutes."
 	tooSlow    = "The bot's model didn't write the quiz in time. Try again, perhaps with fewer questions."
 	refused    = "The bot's model turned the quiz down just now; it may be over its budget for today. Try again later."
 	poor       = "I couldn't write a good quiz on that topic. Try another, or try again."
@@ -60,10 +59,6 @@ const (
 	maxNamed    = 20   // players named as right under one question
 	maxRanked   = 10   // players in the results and scores
 )
-
-// botSampleTimeout is how long the bot works on a sampling request, even
-// one the quiz has given up on; it takes no other meanwhile.
-const botSampleTimeout = 2 * time.Minute
 
 // tools are the quiz's tools, both for the bot alone: neither is offered
 // to the model.
@@ -212,10 +207,6 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 		return addon.Text(writing)
 	}
 	if c.Group && s.srv.WatchReactions() { // players join by reacting to the intro first
-		if s.clock.Now().Before(s.held) { // a lobby would wait most of prepMax for the slot
-			s.mu.Unlock()
-			return addon.Text(slotHeld)
-		}
 		r := s.openLobbyLocked(c, topic, n, length)
 		s.mu.Unlock()
 		s.save()
@@ -314,8 +305,8 @@ func (s *server) opening(q *quiz) addon.Result {
 }
 
 // compose has the model write n questions on topic for chat within ctx,
-// once the slot is free, and frees the slot: at once, or, after a request
-// given up on, once the bot is done with it.
+// once the slot is free, and frees the slot. A request given up on frees
+// the bot's place at once, so the next quiz needn't wait for it.
 func (s *server) compose(ctx context.Context, chat, topic string, n int) ([]question, genStats, time.Duration, error) {
 	select {
 	case s.slot <- struct{}{}:
@@ -328,15 +319,7 @@ func (s *server) compose(ctx context.Context, chat, topic string, n int) ([]ques
 	}
 	began := time.Now()
 	qs, st, err := s.write(ctx, chat, topic, n)
-	if hold := st.lastSent.Add(botSampleTimeout).Sub(s.clock.Now()); st.cancelled && hold > 0 {
-		// The bot works on the cancelled request until its own timeout.
-		s.mu.Lock()
-		s.held = s.clock.Now().Add(hold)
-		s.mu.Unlock()
-		s.clock.AfterFunc(hold, func() { <-s.slot })
-	} else {
-		<-s.slot
-	}
+	<-s.slot
 	took := time.Since(began).Round(100 * time.Millisecond)
 	if err != nil {
 		s.log.Printf("no quiz: %v, after %d sampling rounds in %s, %d rejected, %d repeats", err, st.rounds, took, st.rejected, st.repeats)

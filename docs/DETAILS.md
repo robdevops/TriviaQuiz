@@ -132,11 +132,11 @@ lobby (a DM, or a bot that doesn't pass reactions). The quiz gives up a few
 seconds before the bot's timeout, says so ("The bot's model didn't write
 the quiz in time…"), and starts no quiz the bot has given up on. With a
 lobby, `/quiz` answers at once and the questions are written meanwhile,
-within 2 minutes of their own. The
-bot takes one sampling request at a time from an addon, so the quiz writes
-one quiz at a time: a `/quiz` in a second chat meanwhile waits for it. The
-bot works on a request the quiz gave up on for up to 2 minutes, and the
-next quiz waits for that too, or is told to try again in a minute.
+within 2 minutes of their own. The bot takes one sampling request at a
+time from an addon, so the quiz writes one quiz at a time: a `/quiz` in a
+second chat meanwhile waits for it. A request the quiz gives up on (by
+`/quiz end`, say) frees the bot at once, so the next quiz needn't wait;
+this needs signalbot 7bb1d03 or newer.
 
 The quiz keeps its own files in `QUIZ_STATE_DIR`. There's nothing to set
 up: signalbot sets it to `addons/quiz` in its own state directory

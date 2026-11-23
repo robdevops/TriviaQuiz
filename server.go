@@ -41,7 +41,6 @@ type server struct {
 	asked   map[string][]stamp            // by chat, the questions of the last askedDays days
 	prep    time.Duration                 // how long a lobby's questions may take to write: prepMax, or less in tests
 	preps   map[string]context.CancelFunc // stops writing a lobby's questions, by quiz
-	held    time.Time                     // until when the slot is held for a request given up on
 	life    context.Context               // the session's, while serve runs: preparation ends with it
 	// stopping is set once the session is ending, before a sampling
 	// request fails for it, so preparation leaves its quiz as it is.

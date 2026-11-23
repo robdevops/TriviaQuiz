@@ -1165,20 +1165,14 @@ func TestRefusedAndSlow(t *testing.T) {
 		t.Error("a quiz started")
 	}
 
-	// The bot works on the cancelled request until its own timeout, so the
-	// next quiz waits for that.
+	// A cancelled request frees the bot's place at once: the next quiz is
+	// written straight away.
 	model.mu.Lock()
 	model.hang = false
 	model.mu.Unlock()
 	model.add(asJSON(capital, landing, element))
-	ctx = from(clk, "c_two", bob)
-	ctx.Deadline = time.Now().Add(replyTime + time.Second).Unix()
-	if got := words(c.quiz("", ctx)); got != slotBusy {
-		t.Errorf("while the bot is busy: %q", got)
-	}
-	clk.Advance(botSampleTimeout)
 	if r := c.quiz("", from(clk, "c_two", bob)); r.Meta == nil || r.Meta.Watch == nil {
-		t.Errorf("once the bot is done: %+v", r)
+		t.Errorf("after a cancelled request: %+v", r)
 	}
 
 	// A busy bot is no refusal.
@@ -1886,14 +1880,10 @@ func TestLobbyOffWhilePreparing(t *testing.T) {
 		if cancelled != 1 {
 			t.Errorf("by end %v: %d requests cancelled", byEnd, cancelled)
 		}
-		if byEnd { // the bot works on the cancelled request for botSampleTimeout
-			if got := words(c.quiz("", from(clk, chat, alice))); got != slotHeld {
-				t.Errorf("a /quiz while the bot works on the cancelled request: %q", got)
-			}
-			clk.Advance(botSampleTimeout)
-		}
+		// The cancelled request freed the bot's place: the next /quiz opens
+		// its lobby at once.
 		if r := c.quiz("", from(clk, chat, alice)); r.Meta == nil || r.Meta.Watch == nil {
-			t.Errorf("by end %v: a /quiz once the bot is done: %+v", byEnd, r)
+			t.Errorf("by end %v: a /quiz right after: %+v", byEnd, r)
 		}
 		c.close()
 		if strings.Contains(logs.String(), "written:") {

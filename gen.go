@@ -51,8 +51,6 @@ var (
 // genStats is what writing a quiz took, for the log.
 type genStats struct {
 	rounds, rejected, repeats int
-	lastSent                  time.Time // when the last sampling request went
-	cancelled                 bool      // whether one was given up on before the bot answered
 }
 
 // systemPrompt is the rules the model writes questions by.
@@ -169,12 +167,10 @@ func (s *server) write(ctx context.Context, chat, topic string, n int) ([]questi
 	system := s.systemPrompt()
 	for round := 0; round <= followUps; round++ {
 		st.rounds++
-		st.lastSent = s.clock.Now()
 		res, err := s.srv.Sample(ctx, chat, addon.SampleRequest{Messages: msgs, SystemPrompt: system, MaxTokens: s.cfg.MaxTokens, Temperature: &temperature})
 		if err != nil {
 			var refused *addon.BotError
 			isBot := errors.As(err, &refused)
-			st.cancelled = !isBot && ctx.Err() != nil
 			switch {
 			case len(good) >= need: // a follow-up failed: play with what is good
 				s.log.Printf("a follow-up failed after %d rounds", st.rounds)
