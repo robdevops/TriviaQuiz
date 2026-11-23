@@ -47,7 +47,7 @@ Go 1.27 or newer.
    ```
    git clone https://github.com/robdevops/chat-plugin-quiz.git
    cd chat-plugin-quiz
-   CGO_ENABLED=0 go build -ldflags='-s -w' -o /opt/signalbot-addons/quiz .
+   CGO_ENABLED=0 go build -ldflags='-s -w' -o /tmp/quiz . && sudo install -D -m 755 /tmp/quiz /opt/signalbot-addons/quiz
    ```
 
 2. **Add it to the MCP servers file** (`MCP_CONFIG`). It must be called

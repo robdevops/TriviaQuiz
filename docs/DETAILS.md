@@ -72,7 +72,7 @@ and systemd is happy with:
 ```
 git clone https://github.com/robdevops/chat-plugin-quiz.git
 cd chat-plugin-quiz
-CGO_ENABLED=0 go build -ldflags='-s -w' -o /opt/signalbot-addons/quiz .
+CGO_ENABLED=0 go build -ldflags='-s -w' -o /tmp/quiz . && sudo install -D -m 755 /tmp/quiz /opt/signalbot-addons/quiz
 ```
 
 The build downloads signalbot's module, at the commit `go.mod` names, for
