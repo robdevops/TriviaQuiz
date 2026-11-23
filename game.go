@@ -24,6 +24,7 @@ const (
 	needsModel = "The quiz needs the bot's model: give the quiz addon the model permission."
 	writing    = "A quiz is being written for this chat; give it a moment."
 	slotBusy   = "Another chat's quiz is being written. Try again in a minute."
+	slotHeld   = "The bot's model is still finishing an earlier request. Try again in a couple of minutes."
 	tooSlow    = "The bot's model didn't write the quiz in time. Try again, perhaps with fewer questions."
 	refused    = "The bot's model turned the quiz down just now; it may be over its budget for today. Try again later."
 	poor       = "I couldn't write a good quiz on that topic. Try another, or try again."
@@ -33,6 +34,11 @@ const (
 	longTopic  = "A topic can be at most 60 characters."
 	longQuiz   = "That quiz would run over 30 minutes: ask for fewer questions or less time."
 	notAnswer  = "Not an answer."
+	// stillWriting is posted when a lobby is ready before its questions.
+	stillWriting = "🧠 Writing the questions…"
+	// restarted calls off a quiz whose questions were being written when
+	// the quiz stopped.
+	restarted = "The quiz was interrupted while its questions were being written, so it's off. Start another with /quiz."
 )
 
 // usage is the help for /quiz.
@@ -175,11 +181,22 @@ func startsWithDigit(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '
 
 // busy is the answer to /quiz while a quiz is on.
 func busy(q *quiz) addon.Result {
-	return addon.Text(fmt.Sprintf("A quiz is on: question %d of %d.", q.Current+1, len(q.Questions)))
+	return addon.Text(fmt.Sprintf("A quiz is on: question %d of %d.", q.Current+1, size(q)))
 }
 
-// start has the model write a quiz for c's chat and begins it, answering
-// with its first question and the watch that takes the replies to it.
+// size is q's number of questions: those asked for while they are still
+// being written.
+func size(q *quiz) int {
+	if q.Preparing {
+		return q.Want
+	}
+	return len(q.Questions)
+}
+
+// start begins a quiz in c's chat. In a group whose bot passes reactions,
+// it answers at once with the lobby's intro and watch, and has the model
+// write the questions meanwhile (prepare); elsewhere it has the model
+// write them first, then answers with the intro, queueing question 1.
 func (s *server) start(ctx context.Context, c *addon.Context, topic string, n int, length time.Duration) addon.Result {
 	s.mu.Lock()
 	if q := s.quizzes[c.Chat]; q != nil {
@@ -193,6 +210,16 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	if s.writing[c.Chat] {
 		s.mu.Unlock()
 		return addon.Text(writing)
+	}
+	if c.Group && s.srv.WatchReactions() { // players join by reacting to the intro first
+		if s.clock.Now().Before(s.held) { // a lobby would wait most of prepMax for the slot
+			s.mu.Unlock()
+			return addon.Text(slotHeld)
+		}
+		r := s.openLobbyLocked(c, topic, n, length)
+		s.mu.Unlock()
+		s.save()
+		return r
 	}
 	s.writing[c.Chat] = true
 	s.mu.Unlock()
@@ -209,37 +236,9 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	}
 	gctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	select {
-	case s.slot <- struct{}{}:
-	default:
-		select {
-		case s.slot <- struct{}{}:
-		case <-gctx.Done():
-			return addon.Text(slotBusy)
-		}
-	}
-	began := time.Now()
-	qs, st, err := s.write(gctx, c.Chat, topic, n)
-	if hold := st.lastSent.Add(botSampleTimeout).Sub(s.clock.Now()); st.cancelled && hold > 0 {
-		// The bot works on the cancelled request until its own timeout.
-		s.clock.AfterFunc(hold, func() { <-s.slot })
-	} else {
-		<-s.slot
-	}
-	took := time.Since(began).Round(100 * time.Millisecond)
+	qs, st, took, err := s.compose(gctx, c.Chat, topic, n)
 	if err != nil {
-		s.log.Printf("no quiz: %v, after %d sampling rounds in %s, %d rejected, %d repeats", err, st.rounds, took, st.rejected, st.repeats)
-		switch {
-		case errors.Is(err, errTooSlow):
-			return addon.Text(tooSlow)
-		case errors.Is(err, errBusy):
-			return addon.Text(slotBusy)
-		case errors.Is(err, errRefused):
-			return addon.Text(refused)
-		case errors.Is(err, errPoor):
-			return addon.Text(poor)
-		}
-		return addon.Text(failed)
+		return addon.Text(failText(err))
 	}
 	if ctx.Err() != nil { // the bot gave up: it won't show the question
 		s.log.Printf("quiz dropped: the bot stopped waiting after %s", took)
@@ -260,31 +259,148 @@ func (s *server) start(ctx context.Context, c *addon.Context, topic string, n in
 	}
 	s.quizzes[c.Chat] = q
 	s.remember(c.Chat, qs, now)
-	if c.Group && s.srv.WatchReactions() { // players join by reacting to the intro first
-		q.Lobby, q.Joined, q.CallOff = true, nil, now.Add(lobbyMax)
-		q.End = q.End.Add(lobbyMax)
-		s.armLobby(q)
-	} else {
-		if !c.Group { // a DM: its one player, so no question waits for the timer
-			q.Players = []string{c.Sender}
-		}
-		s.arm(q)
-		// The question is a post of its own, so its answer can reply to it. It
-		// waits in the chat's mailbox behind this call's answer, the intro, so
-		// it always comes second, once the watch that takes its replies is on.
-		q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
+	if !c.Group { // a DM: its one player, so no question waits for the timer
+		q.Players = []string{c.Sender}
 	}
-	text := intro(q)
+	s.arm(q)
+	// The question is a post of its own, so its answer can reply to it. It
+	// waits in the chat's mailbox behind this call's answer, the intro, so
+	// it always comes second, once the watch that takes its replies is on.
+	q.Post = s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: clamp(questionText(q), maxPost)})[0]
+	r := s.opening(q)
 	s.mu.Unlock()
 	s.save()
 	s.log.Printf("quiz %s started: %d questions of %s, %d sampling rounds in %s, %d rejected, %d repeats",
 		q.ID, len(qs), length, st.rounds, took, st.rejected, st.repeats)
+	return r
+}
+
+// openLobbyLocked opens a lobby for a quiz of n questions in c's chat,
+// starts preparing its questions, and returns the intro with the watch.
+// The watch covers the lobby, preparation as far as it can outlast the
+// lobby, and the quiz. s.mu is held.
+func (s *server) openLobbyLocked(c *addon.Context, topic string, n int, length time.Duration) addon.Result {
+	now := s.clock.Now()
+	q := &quiz{
+		ID: "q" + randomID(6), Chat: c.Chat, Starter: c.Sender, Topic: topic,
+		Want: n, Time: length, Started: now,
+		End:     now.Add(max(lobbyMax, s.prep) + time.Duration(n)*(length+settle) + time.Duration(n-1)*s.gap),
+		Answers: map[string]answer{}, Points: map[string]int{}, Right: map[string]int{},
+		Lobby: true, Preparing: true, CallOff: now.Add(lobbyMax),
+	}
+	s.quizzes[c.Chat] = q
+	s.armLobby(q)
+	base := s.life
+	if base == nil {
+		base = context.Background()
+	}
+	pctx, cancel := context.WithTimeout(base, s.prep)
+	s.preps[q.ID] = cancel
+	s.prepWG.Add(1)
+	go s.prepare(pctx, q.ID, c.Chat, topic, n)
+	s.log.Printf("quiz %s opened its lobby: writing %d questions of %s", q.ID, n, length)
+	return s.opening(q)
+}
+
+// opening is the answer that starts q: its intro, and the watch for the
+// whole quiz. s.mu is held.
+func (s *server) opening(q *quiz) addon.Result {
 	return addon.Result{
-		Content: addon.Text(clamp(text, maxPost)).Content,
+		Content: addon.Text(clamp(intro(q), maxPost)).Content,
 		Meta: &addon.ResultMeta{Watch: &addon.Watch{
 			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer", Over: "That quiz is over. Start another with /quiz.",
 		}},
 	}
+}
+
+// compose has the model write n questions on topic for chat within ctx,
+// once the slot is free, and frees the slot: at once, or, after a request
+// given up on, once the bot is done with it.
+func (s *server) compose(ctx context.Context, chat, topic string, n int) ([]question, genStats, time.Duration, error) {
+	select {
+	case s.slot <- struct{}{}:
+	default:
+		select {
+		case s.slot <- struct{}{}:
+		case <-ctx.Done():
+			return nil, genStats{}, 0, errBusy
+		}
+	}
+	began := time.Now()
+	qs, st, err := s.write(ctx, chat, topic, n)
+	if hold := st.lastSent.Add(botSampleTimeout).Sub(s.clock.Now()); st.cancelled && hold > 0 {
+		// The bot works on the cancelled request until its own timeout.
+		s.mu.Lock()
+		s.held = s.clock.Now().Add(hold)
+		s.mu.Unlock()
+		s.clock.AfterFunc(hold, func() { <-s.slot })
+	} else {
+		<-s.slot
+	}
+	took := time.Since(began).Round(100 * time.Millisecond)
+	if err != nil {
+		s.log.Printf("no quiz: %v, after %d sampling rounds in %s, %d rejected, %d repeats", err, st.rounds, took, st.rejected, st.repeats)
+	}
+	return qs, st, took, err
+}
+
+// failText is what players are told when the quiz couldn't be written.
+func failText(err error) string {
+	switch {
+	case errors.Is(err, errTooSlow):
+		return tooSlow
+	case errors.Is(err, errBusy):
+		return slotBusy
+	case errors.Is(err, errRefused):
+		return refused
+	case errors.Is(err, errPoor):
+		return poor
+	}
+	return failed
+}
+
+// prepare writes the questions of the quiz id in chat, in its lobby,
+// within ctx: prepMax, or until the lobby is called off or the session
+// ends. Once written, the quiz starts if its lobby is ready and still has
+// minPlayers (else the lobby waits for joins again); if they
+// can't be, the quiz is called off with why. A quiz called off meanwhile,
+// or a session ending, leaves it all as it is.
+func (s *server) prepare(ctx context.Context, id, chat, topic string, n int) {
+	defer s.prepWG.Done()
+	qs, st, took, err := s.compose(ctx, chat, topic, n)
+	s.mu.Lock()
+	if stop := s.preps[id]; stop != nil {
+		stop()
+		delete(s.preps, id)
+	}
+	q := s.quizzes[chat]
+	switch {
+	case s.stopping:
+		s.mu.Unlock()
+		s.log.Printf("quiz %s: writing stopped, as the session ended", id)
+		return
+	case q == nil || q.ID != id || !q.Preparing:
+		s.mu.Unlock()
+		s.log.Printf("quiz %s: writing dropped, as the lobby was called off", id)
+		return
+	case err != nil:
+		s.callOffLocked(q, failText(err))
+	default:
+		q.Questions, q.Preparing = qs, false
+		s.remember(chat, qs, s.clock.Now())
+		s.log.Printf("quiz %s written: %d questions, %d sampling rounds in %s, %d rejected, %d repeats",
+			id, len(qs), st.rounds, took, st.rejected, st.repeats)
+		if q.Waiting { // the lobby was ready: start now, if its players stayed
+			q.Waiting = false
+			if len(q.Joined) >= minPlayers {
+				s.beginLocked(q)
+			} else { // back to waiting for joins, or CallOff
+				s.armLobby(q)
+			}
+		}
+	}
+	s.mu.Unlock()
+	s.save()
 }
 
 // intro is the quiz's first lines: its topic, its length, and how to
@@ -297,7 +413,7 @@ func intro(q *quiz) string {
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby {
 		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join**, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.\n%sA question ends as soon as everyone who joined has answered.",
-			title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
+			title, size(q), plural(size(q), "question", "questions"), lengthLabel(q.Time), how)
 	}
 	return fmt.Sprintf("%s · %d %s, %s each.\n%sFrom question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
 		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
@@ -651,8 +767,13 @@ func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 }
 
 // armLobby sets q's lobby timer: with enough players, to start lobbyWait
-// after the last join; else to call the quiz off at CallOff. s.mu is held.
+// after the last join, or, if its questions aren't written yet, to say so
+// and wait for them; else to call the quiz off at CallOff. A lobby that is
+// waiting has no timer. s.mu is held.
 func (s *server) armLobby(q *quiz) {
+	if q.Waiting { // ready: it starts once its questions are written
+		return
+	}
 	at := q.CallOff
 	if len(q.Joined) >= minPlayers {
 		at = q.LastJoin.Add(lobbyWait)
@@ -670,6 +791,10 @@ func (s *server) armLobby(q *quiz) {
 		}
 		now := s.clock.Now()
 		switch {
+		case len(q.Joined) >= minPlayers && !now.Before(q.LastJoin.Add(lobbyWait)) && q.Preparing:
+			q.Waiting = true
+			s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: stillWriting})
+			s.log.Printf("quiz %s ready: waiting for its questions", q.ID)
 		case len(q.Joined) >= minPlayers && !now.Before(q.LastJoin.Add(lobbyWait)):
 			s.beginLocked(q)
 		case len(q.Joined) < minPlayers && !now.Before(q.CallOff):
@@ -693,9 +818,13 @@ func (s *server) beginLocked(q *quiz) {
 	s.log.Printf("quiz %s began: %d players", q.ID, len(q.Players))
 }
 
-// callOffLocked ends q in its lobby, saying why if why isn't "", and ends
-// its watch. s.mu is held.
+// callOffLocked ends q in its lobby, saying why if why isn't "", ends its
+// watch, and stops writing its questions. s.mu is held.
 func (s *server) callOffLocked(q *quiz, why string) {
+	if stop := s.preps[q.ID]; stop != nil {
+		stop()
+		delete(s.preps, q.ID)
+	}
 	if why != "" {
 		s.queue(addon.Op{Op: "post", Chat: q.Chat, Text: why})
 	}

@@ -63,7 +63,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	done := make(chan error, 1)
-	go func() { done <- s.srv.Run(ctx, os.Stdin, stdout) }()
+	go func() { done <- s.serve(ctx, os.Stdin, stdout) }()
 	select {
 	case err = <-done:
 	case <-ctx.Done():

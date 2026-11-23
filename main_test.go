@@ -92,9 +92,11 @@ func (b *syncBuffer) String() string {
 
 // fakeModel is the bot's model as the fake bot serves it: it answers each
 // sampling request with the next of its replies, keeping the requests.
-// With hang, it never answers, and waits for the request to be cancelled.
+// With hang, it never answers, and waits for the request to be cancelled;
+// with a gate, it answers once the gate is closed.
 type fakeModel struct {
 	mu       sync.Mutex
+	gate     chan struct{}
 	replies  []string
 	stop     []string // each reply's stopReason; "" is endTurn
 	refuse   bool
@@ -106,8 +108,14 @@ type fakeModel struct {
 // answer is the model's answer to req, or an error.
 func (m *fakeModel) answer(req sampleRequest) (*sampleResult, *rpcError, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.requests = append(m.requests, req)
+	gate := m.gate
+	m.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	switch {
 	case m.hang:
 		return nil, nil, false
@@ -209,7 +217,7 @@ func connect(t *testing.T, s *server, model *fakeModel) *client {
 	c := &client{t: t, s: s, model: model, in: inW, notes: make(chan string, 16), served: make(chan error, 1), stop: cancel, waiting: map[string]chan response{}}
 	c.done.Add(1)
 	go func() {
-		err := s.srv.Run(ctx, inR, outW)
+		err := s.serve(ctx, inR, outW)
 		outW.Close()
 		c.served <- err
 	}()
@@ -1475,6 +1483,7 @@ func TestLobby(t *testing.T) {
 	c := connect(t, testServer(t, t.TempDir(), clk, &logs), model)
 	c.initializeWith(true, true, true)
 	r := c.quiz("20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
 	if !strings.Contains(words(r), "React to this message with any emoji to join") || !strings.Contains(words(r), "whoever started it too") || r.Meta == nil || !r.Meta.Watch.Reactions || !strings.HasSuffix(r.Meta.Watch.Over, "is over. Start another with /quiz.") {
 		t.Fatalf("lobby intro %+v", r)
 	}
@@ -1532,6 +1541,7 @@ func TestLobbyOff(t *testing.T) {
 	c := connect(t, testServer(t, dir, clk, &logs), model)
 	c.initializeWith(true, true, true)
 	c.quiz("20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
 	c.react(false, from(clk, chat, alice))
 	c.react(false, from(clk, chat, bob))
 	c.react(true, from(clk, chat, alice)) // the starter leaves: back to 1, no countdown
@@ -1547,6 +1557,7 @@ func TestLobbyOff(t *testing.T) {
 	}
 
 	c.quiz("20s", from(clk, "c_two", alice))
+	waitPrepared(t, c, "c_two")
 	if got := words(c.quiz("end", from(clk, "c_two", alice))); got != "The quiz is off." {
 		t.Errorf("end in the lobby %q", got)
 	}
@@ -1567,6 +1578,7 @@ func TestLobbyRestart(t *testing.T) {
 	c := connect(t, testServer(t, dir, clk, &logs), model)
 	c.initializeWith(true, true, true)
 	c.quiz("20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
 	c.react(false, from(clk, chat, alice))
 	c.react(false, from(clk, chat, bob))
 	c.close()
@@ -1601,5 +1613,324 @@ func TestDMEndsEarly(t *testing.T) {
 	c.note()
 	if p := c.outbox(page.Cursor); len(p.Ops) == 0 || p.Ops[0].ReplyTo == "" {
 		t.Errorf("question 1 waited for its timer: %+v", p)
+	}
+}
+
+// waitFor waits for cond, which the server meets on its own goroutines.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for wait := time.Now().Add(5 * time.Second); !cond(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(wait) {
+			t.Fatalf("no %s", what)
+		}
+	}
+}
+
+// waitPrepared waits until the quiz in chat, if any, has its questions.
+func waitPrepared(t *testing.T, c *client, chat string) {
+	t.Helper()
+	waitFor(t, "questions", func() bool {
+		c.s.mu.Lock()
+		defer c.s.mu.Unlock()
+		q := c.s.quizzes[chat]
+		return q == nil || !q.Preparing
+	})
+}
+
+// waitOps waits for at least n ops after cursor, taking the notifications
+// meanwhile, and returns them.
+func waitOps(t *testing.T, c *client, cursor string, n int) outboxPage {
+	t.Helper()
+	var p outboxPage
+	waitFor(t, fmt.Sprintf("%d ops", n), func() bool {
+		for len(c.notes) > 0 {
+			<-c.notes
+		}
+		p = c.outbox(cursor)
+		return len(p.Ops) >= n
+	})
+	return p
+}
+
+// lobbyBegin is begin with a bot that passes reactions, so a group's quiz
+// has a lobby, and a model that answers once release is called.
+func lobbyBegin(t *testing.T) (*fakeClock, *client, *fakeModel, *syncBuffer, func()) {
+	t.Helper()
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	logs := &syncBuffer{}
+	model := &fakeModel{gate: make(chan struct{})}
+	c := connect(t, testServer(t, t.TempDir(), clk, logs), model)
+	release := sync.OnceFunc(func() { close(model.gate) })
+	t.Cleanup(release)
+	c.initializeWith(true, true, true)
+	return clk, c, model, logs, release
+}
+
+// preparing reports whether the quiz in chat is still being written.
+func preparing(c *client, chat string) bool {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	q := c.s.quizzes[chat]
+	return q != nil && q.Preparing
+}
+
+// In a lobby, /quiz answers at once, while the model is still writing;
+// questions written during the lobby start at the countdown's end.
+func TestPrepareInLobby(t *testing.T) {
+	clk, c, model, logs, release := lobbyBegin(t)
+	model.add(asJSON(capital, peak, planet))
+	began := clk.Now()
+	r := c.quiz("space 3 20s", from(clk, chat, alice))
+	if !strings.HasPrefix(words(r), "🧠 **Quiz: space** · 3 questions, 20s each.\n👋 **React to this message") || r.Meta == nil || r.Meta.Watch == nil || !r.Meta.Watch.Reactions {
+		t.Fatalf("lobby intro %+v", r)
+	}
+	if want := began.Add(max(lobbyMax, prepMax) + 3*(20*time.Second+settle) + watchSlack).Format(time.RFC3339); r.Meta.Watch.Until != want {
+		t.Errorf("until %s, want %s", r.Meta.Watch.Until, want)
+	}
+	waitFor(t, "sampling request", func() bool { return len(model.sent()) == 1 })
+	if !preparing(c, chat) {
+		t.Fatal("not preparing while the model writes")
+	}
+	if req := model.sent()[0]; req.Meta.Chat != chat || req.Messages[0].Content.Text != `Write 3 questions on this topic: "space"` {
+		t.Errorf("request %+v", req)
+	}
+	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is on: question 1 of 3." {
+		t.Errorf("a second /quiz: %q", got)
+	}
+	c.react(false, from(clk, chat, alice))
+	c.react(false, from(clk, chat, bob))
+	release()
+	waitPrepared(t, c, chat)
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Fatalf("ops before the countdown's end: %+v", p)
+	}
+	clk.Advance(lobbyWait)
+	page := waitOps(t, c, "0", 1)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3** · easy · 20s\n") {
+		t.Fatalf("question 1 %+v", page)
+	}
+	if !strings.Contains(logs.String(), "written: 3 questions, 1 sampling rounds") {
+		t.Errorf("log:\n%s", logs)
+	}
+}
+
+// A lobby ready before its questions says so once, and starts as soon as
+// they are written.
+func TestLobbyReadyFirst(t *testing.T) {
+	clk, c, model, _, release := lobbyBegin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("3 20s", from(clk, chat, alice))
+	c.react(false, from(clk, chat, alice))
+	c.react(false, from(clk, chat, bob))
+	clk.Advance(lobbyWait)
+	page := waitOps(t, c, "0", 1)
+	if len(page.Ops) != 1 || page.Ops[0].Text != stillWriting {
+		t.Fatalf("ready first %+v", page)
+	}
+	if r := c.reply("A", from(clk, chat, bob)); recorded(r) {
+		t.Errorf("an answer before question 1: %+v", r)
+	}
+	clk.Advance(time.Minute)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Fatalf("more posts while waiting: %+v", p)
+	}
+	release()
+	page = waitOps(t, c, page.Cursor, 1)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
+		t.Fatalf("question 1 %+v", page)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{alice, bob}) || !q.Started.Equal(clk.Now()) {
+		t.Errorf("quiz %+v", q)
+	}
+	c.s.mu.Unlock()
+	c.reply(letterOf(t, c, "Canberra"), from(clk, chat, alice))
+	if r := c.reply(letterOf(t, c, "Canberra"), from(clk, chat, bob)); !recorded(r) {
+		t.Errorf("an answer to question 1: %+v", r)
+	}
+}
+
+// A player leaving a ready lobby before its questions are written leaves
+// it waiting for joins again: it starts once enough are back, or is
+// called off at CallOff.
+func TestLobbyLeftWhileWaiting(t *testing.T) {
+	for _, back := range []bool{true, false} {
+		clk, c, model, _, release := lobbyBegin(t)
+		model.add(asJSON(capital, peak, planet))
+		c.quiz("3 20s", from(clk, chat, alice))
+		c.react(false, from(clk, chat, alice))
+		c.react(false, from(clk, chat, bob))
+		clk.Advance(lobbyWait)
+		page := waitOps(t, c, "0", 1)
+		c.react(true, from(clk, chat, bob))
+		release()
+		waitPrepared(t, c, chat)
+		c.s.mu.Lock()
+		q := c.s.quizzes[chat]
+		waiting := q != nil && q.Lobby && !q.Waiting
+		c.s.mu.Unlock()
+		if !waiting {
+			t.Fatalf("back %v: lobby not waiting for joins: %+v", back, q)
+		}
+		if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+			t.Fatalf("back %v: posts with one player: %+v", back, p)
+		}
+		if back {
+			c.react(false, from(clk, chat, bob))
+			clk.Advance(lobbyWait)
+			page = waitOps(t, c, page.Cursor, 1)
+			if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
+				t.Fatalf("question 1 %+v", page)
+			}
+			c.s.mu.Lock()
+			if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{alice, bob}) {
+				t.Errorf("quiz %+v", q)
+			}
+			c.s.mu.Unlock()
+		} else {
+			clk.Advance(lobbyMax)
+			page = waitOps(t, c, page.Cursor, 2)
+			if len(page.Ops) != 2 || page.Ops[0].Text != "Not enough players joined, so the quiz is off." || page.Ops[1].Op != "unwatch" {
+				t.Fatalf("called off %+v", page)
+			}
+		}
+		c.close()
+	}
+}
+
+// Questions that can't be written, or not in time, call the quiz off with
+// what /quiz would have said, then end its watch.
+func TestPrepareFails(t *testing.T) {
+	clk, c, model, _, release := lobbyBegin(t)
+	release()
+	model.mu.Lock()
+	model.refuse = true
+	model.mu.Unlock()
+	r := c.quiz("", from(clk, chat, alice))
+	page := waitOps(t, c, "0", 2)
+	if len(page.Ops) != 2 || page.Ops[0].Text != refused || page.Ops[1].Op != "unwatch" || page.Ops[1].Watch != r.Meta.Watch.ID {
+		t.Fatalf("refused %+v", page)
+	}
+	c.s.mu.Lock()
+	on := c.s.quizzes[chat] != nil
+	c.s.mu.Unlock()
+	if on {
+		t.Error("the quiz is still on")
+	}
+
+	model.mu.Lock()
+	model.refuse, model.hang = false, true
+	model.mu.Unlock()
+	c.s.mu.Lock()
+	c.s.prep = 200 * time.Millisecond
+	c.s.mu.Unlock()
+	r = c.quiz("", from(clk, "c_two", alice))
+	c.react(false, from(clk, "c_two", alice))
+	c.react(false, from(clk, "c_two", bob))
+	page = waitOps(t, c, page.Cursor, 2)
+	if len(page.Ops) != 2 || page.Ops[0].Text != tooSlow || page.Ops[0].Chat != "c_two" || page.Ops[1].Op != "unwatch" || page.Ops[1].Watch != r.Meta.Watch.ID {
+		t.Fatalf("too slow %+v", page)
+	}
+	c.mu.Lock()
+	cancelled := len(c.cancelled)
+	c.mu.Unlock()
+	if cancelled != 1 {
+		t.Errorf("%d requests cancelled", cancelled)
+	}
+}
+
+// A lobby called off, by its starter or for want of players, stops the
+// writing, which posts nothing more.
+func TestLobbyOffWhilePreparing(t *testing.T) {
+	for _, byEnd := range []bool{true, false} {
+		clk, c, model, logs, release := lobbyBegin(t)
+		model.add(asJSON(capital, peak, planet))
+		c.quiz("", from(clk, chat, alice))
+		waitFor(t, "sampling request", func() bool { return len(model.sent()) == 1 })
+		want := 1
+		if byEnd {
+			if got := words(c.quiz("end", from(clk, chat, alice))); got != "The quiz is off." {
+				t.Errorf("end %q", got)
+			}
+		} else {
+			clk.Advance(lobbyMax)
+			want = 2
+		}
+		waitFor(t, "end of writing", func() bool { return strings.Contains(logs.String(), "writing dropped") })
+		release()
+		page := waitOps(t, c, "0", want)
+		if len(page.Ops) != want || page.Ops[want-1].Op != "unwatch" || (!byEnd && page.Ops[0].Text != "Not enough players joined, so the quiz is off.") {
+			t.Fatalf("by end %v: %+v", byEnd, page)
+		}
+		c.mu.Lock()
+		cancelled := len(c.cancelled)
+		c.mu.Unlock()
+		if cancelled != 1 {
+			t.Errorf("by end %v: %d requests cancelled", byEnd, cancelled)
+		}
+		if byEnd { // the bot works on the cancelled request for botSampleTimeout
+			if got := words(c.quiz("", from(clk, chat, alice))); got != slotHeld {
+				t.Errorf("a /quiz while the bot works on the cancelled request: %q", got)
+			}
+			clk.Advance(botSampleTimeout)
+		}
+		if r := c.quiz("", from(clk, chat, alice)); r.Meta == nil || r.Meta.Watch == nil {
+			t.Errorf("by end %v: a /quiz once the bot is done: %+v", byEnd, r)
+		}
+		c.close()
+		if strings.Contains(logs.String(), "written:") {
+			t.Errorf("by end %v: written anyway:\n%s", byEnd, logs)
+		}
+	}
+}
+
+// A restart while the questions are being written calls the quiz off,
+// saying so, and ends its watch.
+func TestRestartWhilePreparing(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	dir := t.TempDir()
+	var logs syncBuffer
+	model := &fakeModel{gate: make(chan struct{})}
+	t.Cleanup(func() { close(model.gate) })
+	model.add(asJSON(capital, peak, planet))
+	c := connect(t, testServer(t, dir, clk, &logs), model)
+	c.initializeWith(true, true, true)
+	r := c.quiz("", from(clk, chat, alice))
+	c.react(false, from(clk, chat, alice))
+	waitFor(t, "sampling request", func() bool { return len(model.sent()) == 1 })
+	c.close()
+	if !strings.Contains(logs.String(), "writing stopped, as the session ended") {
+		t.Errorf("log:\n%s", &logs)
+	}
+
+	clk = &fakeClock{now: clk.Now().Add(10 * time.Second)}
+	c = connect(t, testServer(t, dir, clk, &logs), nil)
+	c.initializeWith(false, true, true)
+	page := waitOps(t, c, "0", 2)
+	if n := len(page.Ops); page.Ops[n-2].Text != restarted || page.Ops[n-1].Op != "unwatch" || page.Ops[n-1].Watch != r.Meta.Watch.ID {
+		t.Fatalf("after a restart %+v", page)
+	}
+	c.s.mu.Lock()
+	open := len(c.s.quizzes)
+	c.s.mu.Unlock()
+	if open != 0 || !strings.Contains(logs.String(), "1 called off while being written") {
+		t.Errorf("%d open; log:\n%s", open, &logs)
+	}
+}
+
+// In a DM, with a bot that passes reactions, the quiz is written first, as
+// before, and starts at once.
+func TestDMPreparesFirst(t *testing.T) {
+	clk, c, model, _, release := lobbyBegin(t)
+	release()
+	model.add(asJSON(capital, peak, planet))
+	dm := from(clk, "c_dm", alice)
+	dm.Group = false
+	r := c.quiz("3 20s", dm)
+	if r.Meta == nil || r.Meta.Watch == nil || r.Meta.Watch.Reactions || strings.Contains(words(r), "React to") || len(model.sent()) != 1 {
+		t.Fatalf("DM %+v", r)
+	}
+	if p := waitOps(t, c, "0", 1); len(p.Ops) != 1 || !strings.HasPrefix(p.Ops[0].Text, "**Question 1 of 3**") {
+		t.Fatalf("question 1 %+v", p)
 	}
 }

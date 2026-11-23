@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	mrand "math/rand/v2"
 	"slices"
@@ -29,15 +31,23 @@ type server struct {
 	rand   *mrand.Rand
 
 	mu      sync.Mutex
-	quizzes map[string]*quiz   // by chat
-	timers  map[string]stopper // each quiz's, by chat
-	asks    map[string]stopper // each quiz's next question, posted after the gap, by chat
-	gap     time.Duration      // between a question's answer and the next question: gapTime, or 0 in most tests
-	writing map[string]bool    // chats whose quiz the model is writing
-	scores  map[string][]score // by chat, the last scoreDays days
-	asked   map[string][]stamp // by chat, the questions of the last askedDays days
+	quizzes map[string]*quiz              // by chat
+	timers  map[string]stopper            // each quiz's, by chat
+	asks    map[string]stopper            // each quiz's next question, posted after the gap, by chat
+	gap     time.Duration                 // between a question's answer and the next question: gapTime, or 0 in most tests
+	writing map[string]bool               // chats whose quiz the model is writing
+	scores  map[string][]score            // by chat, the last scoreDays days
+	asked   map[string][]stamp            // by chat, the questions of the last askedDays days
+	prep    time.Duration                 // how long a lobby's questions may take to write: prepMax, or less in tests
+	preps   map[string]context.CancelFunc // stops writing a lobby's questions, by quiz
+	held    time.Time                     // until when the slot is held for a request given up on
+	life    context.Context               // the session's, while serve runs: preparation ends with it
+	// stopping is set once the session is ending, before a sampling
+	// request fails for it, so preparation leaves its quiz as it is.
+	stopping bool
 
-	saveMu sync.Mutex // one save at a time, so the last one written is the newest
+	prepWG sync.WaitGroup // the preparations running
+	saveMu sync.Mutex     // one save at a time, so the last one written is the newest
 }
 
 // quiz is one chat's quiz. Its answers are kept only as right or wrong:
@@ -55,15 +65,18 @@ type quiz struct {
 	Post      string            `json:"post"`    // the outbox op that asked it, for the reveal to reply to
 	Opened    time.Time         `json:"opened"`  // when it opened
 	Deadline  time.Time         `json:"deadline"`
-	Answers   map[string]answer `json:"answers"`            // the open question's, by player
-	Players   []string          `json:"players"`            // who joined, or else who answered question 1: a question ends once they all have
-	Lobby     bool              `json:"lobby,omitempty"`    // waiting for players to join by reacting to the intro
-	Joined    []string          `json:"joined,omitempty"`   // who has joined
-	LastJoin  time.Time         `json:"lastJoin,omitempty"` // when the last player joined: the quiz starts lobbyWait after
-	CallOff   time.Time         `json:"callOff,omitempty"`  // when the lobby gives up with fewer than minPlayers
-	Seq       int               `json:"seq"`                // the answers recorded so far, to break ties
-	Points    map[string]int    `json:"points"`             // by player
-	Right     map[string]int    `json:"right"`              // questions right, by player
+	Answers   map[string]answer `json:"answers"`             // the open question's, by player
+	Players   []string          `json:"players"`             // who joined, or else who answered question 1: a question ends once they all have
+	Lobby     bool              `json:"lobby,omitempty"`     // waiting for players to join by reacting to the intro
+	Want      int               `json:"want,omitempty"`      // the questions asked for
+	Preparing bool              `json:"preparing,omitempty"` // in its lobby, its questions are still being written
+	Waiting   bool              `json:"waiting,omitempty"`   // its lobby is ready, and waits for its questions
+	Joined    []string          `json:"joined,omitempty"`    // who has joined
+	LastJoin  time.Time         `json:"lastJoin,omitempty"`  // when the last player joined: the quiz starts lobbyWait after
+	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers
+	Seq       int               `json:"seq"`                 // the answers recorded so far, to break ties
+	Points    map[string]int    `json:"points"`              // by player
+	Right     map[string]int    `json:"right"`               // questions right, by player
 }
 
 // question is one question as played: its choices already shuffled.
@@ -130,6 +143,9 @@ const (
 	lobbyWait  = 30 * time.Second
 	minPlayers = 2
 	lobbyMax   = 15 * time.Minute
+	// prepMax is how long a lobby's questions may take to write, as
+	// players join.
+	prepMax = 2 * time.Minute
 )
 
 // newServer loads the state saved in cfg.StateDir, re-arms its quizzes'
@@ -145,6 +161,8 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		asks:    map[string]stopper{},
 		gap:     cfg.gap,
 		writing: map[string]bool{},
+		prep:    prepMax,
+		preps:   map[string]context.CancelFunc{},
 		scores:  map[string][]score{},
 		asked:   map[string][]stamp{},
 	}
@@ -161,9 +179,9 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 	}
 	s.srv.Restore(st.Outbox)
 	s.mu.Lock()
-	revealed := 0
+	revealed, interrupted := 0, 0
 	for _, q := range st.Quizzes {
-		if q == nil || s.quizzes[q.Chat] != nil || q.Current >= len(q.Questions) {
+		if q == nil || s.quizzes[q.Chat] != nil || (q.Current >= len(q.Questions) && !q.Preparing) {
 			continue
 		}
 		if q.Answers == nil {
@@ -176,6 +194,11 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 			q.Right = map[string]int{}
 		}
 		s.quizzes[q.Chat] = q
+		if q.Preparing { // its questions were being written: they are lost
+			s.callOffLocked(q, restarted)
+			interrupted++
+			continue
+		}
 		if q.Lobby {
 			s.armLobby(q)
 			continue
@@ -197,11 +220,53 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 	}
 	open := len(s.quizzes)
 	s.mu.Unlock()
-	s.log.Printf("started: %d quizzes open, %d questions revealed late, %d ops held", open, revealed, len(s.srv.Outbox()))
-	if revealed > 0 {
+	s.log.Printf("started: %d quizzes open, %d questions revealed late, %d called off while being written, %d ops held", open, revealed, interrupted, len(s.srv.Outbox()))
+	if revealed+interrupted > 0 {
 		s.save()
 	}
 	return s, nil
+}
+
+// serve runs the session with the bot on in and out until in ends or
+// ctx does, as s.srv.Run does. Preparation runs in the session's context;
+// once the session is ending, it stops, leaving its quiz as it is, and
+// serve waits for it before returning.
+func (s *server) serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	life, end := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.life, s.stopping = life, false
+	s.mu.Unlock()
+	halt := sync.OnceFunc(func() {
+		s.mu.Lock()
+		s.stopping = true
+		s.mu.Unlock()
+		end()
+	})
+	// Run's context ends only once stopping is set, so a sampling request
+	// failing as the session ends is never taken for the model failing.
+	rctx, rend := context.WithCancel(context.Background())
+	defer rend()
+	stop := context.AfterFunc(ctx, func() { halt(); rend() })
+	defer stop()
+	err := s.srv.Run(rctx, haltReader{in, halt}, out)
+	halt()
+	s.prepWG.Wait()
+	return err
+}
+
+// haltReader is the session's input, calling halt before it reports its
+// end or a failure.
+type haltReader struct {
+	r    io.Reader
+	halt func()
+}
+
+func (h haltReader) Read(p []byte) (int, error) {
+	n, err := h.r.Read(p)
+	if err != nil {
+		h.halt()
+	}
+	return n, err
 }
 
 // save writes quiz.json, logging a failure; the state stays in memory, and

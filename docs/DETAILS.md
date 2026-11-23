@@ -38,9 +38,16 @@ counts the cost against the chat's `DAILY_BUDGET`.
   it must react too. It starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
   called off if fewer than 2 have joined after 15 minutes. Those who joined
-  are the players every question waits for; anyone may still answer. On
-  Telegram the bot sees reactions only as the group's admin. In a DM there
-  is no lobby: the quiz starts at once.
+  are the players every question waits for; anyone may still answer. The
+  intro comes at once, and the model writes the questions while players
+  join. If the lobby is ready first, the bot posts "🧠 Writing the
+  questions…" and starts as soon as they are written (if players left
+  meanwhile, it waits for 2 again); if they can't be written within 2
+  minutes, it says why and the quiz is off. A lobby called off while its
+  questions are written leaves the model busy with them for up to 2
+  minutes, so a new group quiz meanwhile is turned down with "try again". On Telegram
+  the bot sees reactions only as the group's admin. In a DM there is no
+  lobby: the questions are written first, then the quiz starts at once.
 - **A pause to read the answer.** When a question ends, its answer comes as
   a reply to it, and the next question 5 seconds later, with its full time.
 - **No waiting once everyone's in.** After a lobby, every question ends as
@@ -115,9 +122,12 @@ add `"dms": true` to play in DMs too. The quiz needs:
   watch allows 15 more for a lobby, so the default `watch_max` of 1h is
   enough.
 
-`"timeout": "90s"` gives the model time to write the quiz. The quiz gives up
-a few seconds before the bot's timeout, says so ("The bot's model didn't
-write the quiz in time…"), and starts no quiz the bot has given up on. The
+`"timeout": "90s"` gives the model time to write the quiz where there is no
+lobby (a DM, or a bot that doesn't pass reactions). The quiz gives up a few
+seconds before the bot's timeout, says so ("The bot's model didn't write
+the quiz in time…"), and starts no quiz the bot has given up on. With a
+lobby, `/quiz` answers at once and the questions are written meanwhile,
+within 2 minutes of their own. The
 bot takes one sampling request at a time from an addon, so the quiz writes
 one quiz at a time: a `/quiz` in a second chat meanwhile waits for it. The
 bot works on a request the quiz gave up on for up to 2 minutes, and the
@@ -218,7 +228,8 @@ player replies goes to the model: answers are marked by the quiz itself.
 - outbox ops the bot hasn't read yet, for at most an hour.
 
 `$QUIZ_STATE_DIR/quiz.log` (moved to `quiz.log.1` past 4 MiB at start)
-records quizzes started, begun after a lobby, called off and ended, with
+records quizzes started, lobbies opened, questions written, quizzes begun
+after a lobby, called off and ended, with
 the number of questions, sampling rounds, rejected questions and repeats,
 times, how many joined, questions ended early, and how many players scored.
 It never holds a question, an answer, a topic, a prompt, a name, a
@@ -233,21 +244,28 @@ The quiz adds:
 - `quiz` (`{args}`, a direct command) and `quiz_answer` (`{text}`, the
   watch's tool), both for the bot alone, so neither is offered to the model.
 - `/quiz` checks that the bot offered `sampling` and, in the extension's
-  capability, `watchReplies` (and `watchReactions`, for a lobby). It then
-  sends one `sampling/createMessage`, charged to the command's chat
-  (`_meta["io.github.robdevops.signalbot/chat"]`), and at most 2
-  follow-ups in the same conversation, all before the call's `deadline`,
-  less 3s to reply.
+  capability, `watchReplies` (and `watchReactions`, for a lobby). The
+  questions come from one `sampling/createMessage`, charged to the
+  command's chat (`_meta["io.github.robdevops.signalbot/chat"]`), and at
+  most 2 follow-ups in the same conversation. Without a lobby they are all
+  sent before the call's `deadline`, less 3s to reply, and the call
+  answers once the quiz is written. In a group's lobby, the call answers at
+  once and they are sent outside any tool call, within 2 minutes, stopped
+  (with `notifications/cancelled`) if the lobby is called off first.
 - It answers with the intro and one watch for the whole quiz:
   `replies: true`, no pattern, `tool: "quiz_answer"`, `reactions: true` in
   a group's lobby, `over: "That quiz is over. Start another with /quiz."`,
-  until 10s past the latest the quiz can end. Reactions come to
+  until 10s past the latest the quiz can end (with a lobby, 15 minutes for
+  the lobby, during which the questions are written, then the quiz). Reactions come to
   `quiz_answer` as `{reaction, removed}`. No answer's result asks the bot
   to react, as reactions take from the chat's post rate, and a post over it
   is lost.
 - Each question is a `post` of its own. Without a lobby, question 1 is
   queued during the `/quiz` call, so it follows the intro the call answers
-  with; after one, it is queued when the lobby starts the quiz. When a
+  with; after one, it is queued when the lobby starts the quiz: at the end of its
+  countdown, or, if the questions aren't written by then, after a post
+  saying so, once they are. Questions that can't be written in a lobby
+  post what `/quiz` would have answered, then an `unwatch`. When a
   question's time is up (3s after its deadline, for answers still in the
   bot's queue), it queues the answer and explanation, with who got it right
   as `{u_…}` placeholders, as a post with `replyTo` the question's post,
@@ -261,4 +279,6 @@ The quiz adds:
   survive a restart. On start, quizzes still open get their timers back, and
   a question whose time passed while the quiz was down is revealed at once;
   the next one gets what is left of the watch, and the quiz ends early if
-  too little is.
+  too little is. A quiz whose questions were still being written in its
+  lobby is called off, with a post saying so, then an `unwatch`: the
+  sampling conversation doesn't survive a restart, so it isn't resumed.
