@@ -661,7 +661,20 @@ func TestQuiz(t *testing.T) {
 		t.Errorf("ops before time is up: %+v", p)
 	}
 
-	clk.Advance(15*time.Second + settle)
+	// 5 seconds left: the bot reacts ⏰ to the question.
+	clk.Advance(10*time.Second - time.Millisecond)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Errorf("ops before 5 seconds are left: %+v", p)
+	}
+	clk.Advance(time.Millisecond)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || page.Ops[0].Op != "react" || page.Ops[0].Chat != chat || page.Ops[0].Post != q1.ID || page.Ops[0].Emoji != "⏰" ||
+		page.Ops[0].Ref != "" || page.Ops[0].Text != "" {
+		t.Fatalf("⏰ %+v", page)
+	}
+
+	clk.Advance(5*time.Second + settle)
 	if m := c.note(); m != "notifications/resources/updated" {
 		t.Errorf("notification %q", m)
 	}
@@ -682,7 +695,7 @@ func TestQuiz(t *testing.T) {
 	if r := c.reply("mount EVEREST!", from(clk, chat, alice)); !recorded(r) {
 		t.Errorf("Alice's text answer: %+v", r)
 	}
-	clk.Advance(17*time.Second + settle)
+	clk.Advance(17*time.Second + settle) // ended early, as both answered: no ⏰
 	c.note()
 	page = c.outbox(page.Cursor)
 	if len(page.Ops) != 2 || page.Ops[0].Text != "✅ **Everest**: Because of What is the highest mountain on Earth?.\nRight: {u_bob} ⚡, {u_alice}" ||
@@ -691,15 +704,16 @@ func TestQuiz(t *testing.T) {
 	}
 	q3 := page.Ops[1]
 
-	clk.Advance(20*time.Second + settle) // nobody answers
+	clk.Advance(20*time.Second + settle) // nobody answers: question 3 gets its own ⏰
 	c.note()
 	page = c.outbox(page.Cursor)
 	results := "🏁 **Quiz over**\n🥇 {u_alice} 20 · 2/3 right\n🥈 {u_bob} 15 · 1/3 right"
-	if len(page.Ops) != 3 || !strings.Contains(page.Ops[0].Text, ". Saturn**") || !strings.HasSuffix(page.Ops[0].Text, "\nNobody got it.") ||
-		page.Ops[0].ReplyTo != q3.ID || page.Ops[1].Text != results || page.Ops[1].ReplyTo != "" {
+	if len(page.Ops) != 4 || page.Ops[0].Op != "react" || page.Ops[0].Post != q3.ID || page.Ops[0].Emoji != "⏰" ||
+		!strings.Contains(page.Ops[1].Text, ". Saturn**") || !strings.HasSuffix(page.Ops[1].Text, "\nNobody got it.") ||
+		page.Ops[1].ReplyTo != q3.ID || page.Ops[2].Text != results || page.Ops[2].ReplyTo != "" {
 		t.Fatalf("results %+v\nwant %q", page, results)
 	}
-	if o := page.Ops[2]; o.Op != "unwatch" || o.Chat != chat || o.Watch != w.ID {
+	if o := page.Ops[3]; o.Op != "unwatch" || o.Chat != chat || o.Watch != w.ID {
 		t.Errorf("unwatch %+v", o)
 	}
 	if r := c.reply("A", from(clk, chat, bob)); recorded(r) || words(r) != noQuiz {
@@ -876,7 +890,7 @@ func TestFollowUps(t *testing.T) {
 	if !slices.Equal(asked, []string{capital["q"].(string), peak["q"].(string), planet["q"].(string), landing["q"].(string), "Which gas do plants take in?"}) {
 		t.Errorf("questions %q", asked)
 	}
-	if !strings.Contains(logs.String(), "5 questions of 40s, 3 sampling rounds") || !strings.Contains(logs.String(), "4 rejected, 1 repeats") {
+	if !strings.Contains(logs.String(), "5 questions of 35s, 3 sampling rounds") || !strings.Contains(logs.String(), "4 rejected, 1 repeats") {
 		t.Errorf("log:\n%s", logs)
 	}
 }
@@ -887,7 +901,7 @@ func TestTooFewGood(t *testing.T) {
 	clk, c, model, _ := begin(t)
 	model.add(asJSON(capital, peak), asJSON(capital), asJSON(planet))
 	r := c.quiz("5", from(clk, chat, alice))
-	if !strings.HasPrefix(words(r), "🧠 **Quiz** · 3 questions, 40s each.") || r.Meta == nil {
+	if !strings.HasPrefix(words(r), "🧠 **Quiz** · 3 questions, 35s each.") || r.Meta == nil {
 		t.Errorf("three of five: %q", words(r))
 	}
 	if reqs := model.sent(); len(reqs) != 3 || !strings.Contains(reqs[2].Messages[4].Content.Text, "question 1 repeats another in this quiz") ||
@@ -1063,6 +1077,7 @@ func TestRestart(t *testing.T) {
 	if !strings.Contains(logs.String(), "1 quizzes open, 1 questions revealed late") {
 		t.Errorf("log:\n%s", &logs)
 	}
+	q2 := page.Ops[2].ID
 	clk.Advance(30 * time.Second)
 	if r := c.reply("Everest", from(clk, chat, bob)); !recorded(r) {
 		t.Errorf("an answer to question 2: %+v", r)
@@ -1070,9 +1085,11 @@ func TestRestart(t *testing.T) {
 	clk.Advance(30*time.Second + settle)
 	c.note()
 	page = c.outbox(page.Cursor)
-	// The last question gets what is left of the watch: the restart cost
-	// question 1 seven seconds, of which the slack covers five.
-	if len(page.Ops) != 2 || page.Ops[0].ReplyTo == "" || !strings.Contains(page.Ops[1].Text, "**Question 3 of 3** · hard · 58s\n") {
+	// Alice didn't answer: question 2's ⏰, then its answer. The last
+	// question gets what is left of the watch: the restart cost question 1
+	// seven seconds, of which the slack covers five.
+	if len(page.Ops) != 3 || page.Ops[0].Op != "react" || page.Ops[0].Post != q2 || page.Ops[1].ReplyTo != q2 ||
+		!strings.Contains(page.Ops[2].Text, "**Question 3 of 3** · hard · 58s\n") {
 		t.Fatalf("question 3 %+v", page)
 	}
 	c.close()
@@ -1200,8 +1217,8 @@ func TestArgs(t *testing.T) {
 	for _, tc := range []struct{ args, prompt, intro string }{
 		{"80s music 5 45s", `Write 5 questions on this topic: "80s music"`, "🧠 **Quiz: 80s music** · 3 questions, 45s each."},
 		{"the year 1984 2m 2", `Write 2 questions on this topic: "the year 1984"`, "🧠 **Quiz: the year 1984** · 2 questions, 2 min each."},
-		{"", `Write 5 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 40s each."},
-		{"7", `Write 7 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 40s each."},
+		{"", `Write 5 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 35s each."},
+		{"7", `Write 7 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 35s each."},
 		{"[x](y) *z*", `Write 5 questions on this topic: "x(y) z"`, "🧠 **Quiz: x(y) z** · 3 questions"},
 	} {
 		model.add(asJSON(capital, peak, planet))
@@ -1263,7 +1280,7 @@ func TestLongReveal(t *testing.T) {
 	}
 	clk.Advance(defaultTime + settle)
 	c.note()
-	text := c.outbox("0").Ops[1].Text
+	text := c.outbox("0").Ops[2].Text // after the question and its ⏰
 	if !strings.HasSuffix(text, "{u_player19} and 10 more") || len([]rune(text)) > maxPost {
 		t.Errorf("reveal %q", text)
 	}
@@ -1279,7 +1296,7 @@ func TestConfig(t *testing.T) {
 		return func(k string) string { return m[k] }
 	}
 	c, err := loadConfig(env())
-	if err != nil || c.Questions != 5 || c.Time != 40*time.Second || c.Language != "English" || c.Difficulty != "medium" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
+	if err != nil || c.Questions != 5 || c.Time != 35*time.Second || c.Language != "English" || c.Difficulty != "medium" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
 		t.Errorf("defaults %+v %v", c, err)
 	}
 	c, err = loadConfig(env("QUIZ_QUESTIONS", "8", "QUIZ_TIME", "1m", "QUIZ_LANGUAGE", "Deutsch", "QUIZ_DIFFICULTY", "Hard", "QUIZ_MAX_TOKENS", "6000", "QUIZ_MEMLIMIT", "1GiB"))
@@ -1347,7 +1364,7 @@ func TestEarlyEnd(t *testing.T) {
 	clk.Advance(50*time.Second + settle) // question 1 always runs its time
 	c.note()
 	page = c.outbox(page.Cursor)
-	if len(page.Ops) != 2 {
+	if len(page.Ops) != 3 || page.Ops[0].Emoji != "⏰" { // its ⏰, its answer and question 2
 		t.Fatalf("question 1's reveal %+v", page)
 	}
 	c.s.mu.Lock()
@@ -1372,6 +1389,7 @@ func TestEarlyEnd(t *testing.T) {
 	}
 	clk.Advance(settle)
 	c.note()
+	clk.Advance(50 * time.Second) // past when question 2's ⏰ was due, which it ended too early for, and before question 3's
 	page = c.outbox(page.Cursor)
 	if len(page.Ops) != 2 || !strings.Contains(page.Ops[0].Text, "Everest") || !strings.HasPrefix(page.Ops[1].Text, "**Question 3 of 3**") {
 		t.Fatalf("question 2's early reveal %+v", page)
@@ -1413,7 +1431,7 @@ func TestGap(t *testing.T) {
 	clk.Advance(20*time.Second + settle)
 	c.note()
 	page = c.outbox(page.Cursor)
-	if len(page.Ops) != 1 || page.Ops[0].ReplyTo == "" {
+	if len(page.Ops) != 2 || page.Ops[0].Emoji != "⏰" || page.Ops[1].ReplyTo == "" { // its ⏰, then the answer
 		t.Fatalf("the answer alone %+v", page)
 	}
 	if rr := c.reply("Everest", from(clk, chat, bob)); recorded(rr) {
@@ -1932,5 +1950,188 @@ func TestDMPreparesFirst(t *testing.T) {
 	}
 	if p := waitOps(t, c, "0", 1); len(p.Ops) != 1 || !strings.HasPrefix(p.Ops[0].Text, "**Question 1 of 3**") {
 		t.Fatalf("question 1 %+v", p)
+	}
+}
+
+// isWarn reports whether o is the ⏰ on the post post in chat.
+func isWarn(o outboxOp, post string) bool {
+	return o.Op == "react" && o.Chat == chat && o.Post == post && o.Post != "" && o.Emoji == "⏰" && o.Ref == "" && o.Text == ""
+}
+
+// With 5 seconds left, the bot reacts ⏰ to the open question's post, and
+// each question gets its own; a question ended early gets none.
+func TestWarn(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("3 30s", from(clk, chat, alice))
+	c.note()
+	page := c.outbox("0")
+	q1 := page.Ops[0].ID
+	c.reply(letterOf(t, c, "Canberra"), from(clk, chat, alice))
+	c.reply(wrongLetter(c), from(clk, chat, bob))
+	clk.Advance(25*time.Second - time.Millisecond)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Fatalf("ops before 5s are left: %+v", p)
+	}
+	clk.Advance(time.Millisecond)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || !isWarn(page.Ops[0], q1) {
+		t.Fatalf("question 1's ⏰ %+v", page)
+	}
+	clk.Advance(5*time.Second + settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 2 || page.Ops[0].ReplyTo != q1 {
+		t.Fatalf("question 1's reveal %+v", page)
+	}
+	q2 := page.Ops[1].ID
+
+	// Question 2 gets its own ⏰, on its own post.
+	clk.Advance(25 * time.Second)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || !isWarn(page.Ops[0], q2) {
+		t.Fatalf("question 2's ⏰ %+v", page)
+	}
+	clk.Advance(5*time.Second + settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 2 || page.Ops[0].ReplyTo != q2 {
+		t.Fatalf("question 2's reveal %+v", page)
+	}
+
+	// Question 3 ends early, as Alice and Bob both answer: no ⏰, ever.
+	clk.Advance(2 * time.Second)
+	c.reply(wrongLetter(c), from(clk, chat, alice))
+	c.reply(wrongLetter(c), from(clk, chat, bob))
+	c.s.mu.Lock()
+	if w := c.s.warns[chat]; w != nil {
+		t.Errorf("question 3's ⏰ still armed after it ended early")
+	}
+	c.s.mu.Unlock()
+	clk.Advance(settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 3 || page.Ops[0].Op != "post" || page.Ops[2].Op != "unwatch" {
+		t.Fatalf("question 3's early reveal %+v", page)
+	}
+	clk.Advance(time.Minute)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Errorf("ops after the quiz %+v", p)
+	}
+}
+
+// In a DM, question 1 is a post of its own too, so it gets its ⏰.
+func TestWarnDM(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	dm := from(clk, chat, alice)
+	dm.Group = false
+	c.quiz("1 20s", dm)
+	c.note()
+	page := c.outbox("0")
+	q1 := page.Ops[0].ID
+	clk.Advance(15 * time.Second)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || !isWarn(page.Ops[0], q1) {
+		t.Fatalf("⏰ in a DM %+v", page)
+	}
+}
+
+// /quiz end stops the open question's ⏰.
+func TestWarnEnd(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("3 30s", from(clk, chat, alice))
+	c.note()
+	page := c.outbox("0")
+	clk.Advance(10 * time.Second)
+	if got := words(c.quiz("end", from(clk, chat, alice))); !strings.Contains(got, "🏁 **Quiz over") {
+		t.Fatalf("end %q", got)
+	}
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 1 || page.Ops[0].Op != "unwatch" {
+		t.Fatalf("end %+v", page)
+	}
+	clk.Advance(time.Minute)
+	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
+		t.Errorf("ops after /quiz end %+v", p)
+	}
+}
+
+// A restart re-arms the ⏰ of a question with more than 5 seconds left;
+// one with less gets none.
+func TestWarnRestart(t *testing.T) {
+	for _, tc := range []struct {
+		down time.Duration // from the question's start to the restart
+		warn bool
+	}{{20 * time.Second, true}, {26 * time.Second, false}} {
+		clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+		dir := t.TempDir()
+		model := &fakeModel{}
+		model.add(asJSON(capital, peak, planet))
+		c := connect(t, testServer(t, dir, clk, io.Discard), model)
+		c.initialize(true, true)
+		c.quiz("3 30s", from(clk, chat, alice))
+		c.note()
+		q1 := c.outbox("0").Ops[0].ID
+		c.close()
+
+		clk = &fakeClock{now: clk.Now().Add(tc.down)}
+		c = connect(t, testServer(t, dir, clk, io.Discard), nil)
+		c.initialize(false, false)
+		page := c.outbox("old") // what was held, the question
+		// The ⏰ comes not before deadline−5s, then right on it.
+		if tc.warn {
+			clk.Advance(25*time.Second - tc.down - time.Millisecond)
+			if page = c.outbox(page.Cursor); len(page.Ops) != 0 {
+				t.Errorf("%s down: early ⏰ %+v", tc.down, page)
+			}
+			clk.Advance(time.Millisecond)
+			page = c.outbox(page.Cursor)
+			if len(page.Ops) != 1 || !isWarn(page.Ops[0], q1) {
+				t.Errorf("%s down: no ⏰ at deadline−5s: %+v", tc.down, page)
+			}
+			clk.Advance(5*time.Second - time.Millisecond)
+		} else {
+			clk.Advance(30*time.Second - tc.down - time.Millisecond)
+		}
+		if page = c.outbox(page.Cursor); len(page.Ops) != 0 {
+			t.Errorf("%s down: before the reveal %+v", tc.down, page)
+		}
+		clk.Advance(time.Millisecond + settle)
+		page = c.outbox(page.Cursor)
+		if len(page.Ops) != 2 || page.Ops[0].ReplyTo != q1 {
+			t.Errorf("%s down: reveal %+v", tc.down, page)
+		}
+		c.close()
+	}
+}
+
+// A question shorter than 10s, as a crafted state could have, gets no ⏰:
+// there'd be little time to warn of.
+func TestWarnShort(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.add(asJSON(capital, peak, planet))
+	c.quiz("3 30s", from(clk, chat, alice))
+	c.note()
+	page := c.outbox("0")
+	c.s.mu.Lock()
+	q := c.s.quizzes[chat]
+	q.Deadline = q.Opened.Add(warnMin - time.Second)
+	c.s.arm(q)
+	armed := c.s.warns[chat] != nil
+	c.s.mu.Unlock()
+	if armed {
+		t.Error("a short question's ⏰ is armed")
+	}
+	clk.Advance(warnMin + settle)
+	c.note()
+	page = c.outbox(page.Cursor)
+	if len(page.Ops) != 2 || page.Ops[0].Op != "post" || page.Ops[0].ReplyTo == "" {
+		t.Errorf("a short question's reveal %+v", page)
 	}
 }

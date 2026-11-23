@@ -33,6 +33,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
+- **5 seconds left.** The bot reacts ⏰ to a question with 5 seconds left,
+  unless it has already ended (everyone answered, or `/quiz end`).
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave). Whoever starts
   it must react too. It starts 30 seconds
@@ -69,12 +71,12 @@ counts the cost against the chat's `DAILY_BUDGET`.
 
 ## Install notes
 
-It needs signalbot main at d685491 or newer, for MCP sampling and reply
-and reaction watches (a bot without a model, or without the model
-permission, gets "The quiz needs the bot's model: give the quiz addon the
-model permission."). Get the code and build it with Go 1.27 or newer, as a
-static binary, which the Docker image needs (it has no shell or runtimes)
-and systemd is happy with:
+It needs signalbot at c755fc7 or newer, for MCP sampling, reply and
+reaction watches, and reactions to its own posts (a bot without a model,
+or without the model permission, gets "The quiz needs the bot's model:
+give the quiz addon the model permission."). Get the code and build it
+with Go 1.27 or newer, as a static binary, which the Docker image needs
+(it has no shell or runtimes) and systemd is happy with:
 
 ```
 git clone https://github.com/robdevops/TriviaQuiz.git
@@ -100,7 +102,7 @@ which is what gives it the `QUIZ_` settings below:
   "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
   "addon": {
     "chats": ["all"],
-    "post": true, "watch": true,
+    "post": true, "watch": true, "react": true,
     "model": {"per_hour": 30, "max_tokens": 4000}
   }
 }
@@ -115,8 +117,11 @@ add `"dms": true` to play in DMs too. The quiz needs:
   each answer at it;
 - `post`, for each question, its answer (a reply to the question) and the
   results. The bot drops a post over the chat's post `rate` for good, so the
-  quiz asks for no reactions, which take from the same budget: two posts
-  per question fit the default rate;
+  quiz asks for no reactions to answers, which take from the same budget;
+- `react`, for the ⏰ on a question with 5 seconds left. Without it the bot
+  fails that op, and the quiz plays on without the ⏰. With the two posts,
+  that's three ops per question: as a question has at least 10 seconds,
+  they fit the default rate (20 a minute, bursts of 5);
 - `watch`, to read the replies, and the reactions that join a lobby. A quiz
   is at most 10 questions of 2 minutes, never over 30 minutes, and its
   watch allows 15 more for a lobby, so the default `watch_max` of 1h is
@@ -153,7 +158,7 @@ settings, and nothing else.
 |---|---|---|
 | `QUIZ_STATE_DIR` | signalbot's `addons/quiz` | Where the quiz keeps `quiz.json` and its log. Created, mode 700, if missing; the quiz exits at start if it can't create, list and write it |
 | `QUIZ_QUESTIONS` | `5` | A quiz's questions when `/quiz` doesn't say, 1 to 10 |
-| `QUIZ_TIME` | `40s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
+| `QUIZ_TIME` | `35s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
 | `QUIZ_LANGUAGE` | `English` | The language the model writes the questions and answers in, by name (letters, spaces and hyphens, up to 40) |
 | `QUIZ_DIFFICULTY` | `medium` | `easy`, `medium` or `hard` for every question, or `mixed` (about a third each) |
 | `QUIZ_MAX_TOKENS` | `3000` | The most the model may write for one quiz, 500 to 32000; the addon block's `max_tokens` caps it too |
@@ -275,8 +280,17 @@ The quiz adds:
   and queues only the `unwatch`; in a lobby it calls the quiz off. A lobby
   called off for want of players posts why, then an `unwatch`. Every post
   stays under the bot's 4000 characters.
+- 5 seconds before a question's deadline, it queues
+  `{op: "react", chat, post, emoji: "⏰"}`, with `post` the op ID of the
+  question's own post, so the bot reacts to its message (`react`
+  permission; an unknown post fails the op, with no retry). There is none
+  for a question that ended early (everyone answered, or `/quiz end`), one
+  shorter than 10 seconds, or one whose post the outbox refused (so it has
+  no op ID). Every question, question 1 included, is a post the quiz
+  queued itself, never the `/quiz` call's answer, so each has its ID.
 - Ops the bot hasn't read are saved in `quiz.json`, with their IDs, so they
-  survive a restart. On start, quizzes still open get their timers back, and
+  survive a restart. On start, quizzes still open get their timers back (the
+  ⏰ too, if more than 5 seconds are left), and
   a question whose time passed while the quiz was down is revealed at once;
   the next one gets what is left of the watch, and the quiz ends early if
   too little is. A quiz whose questions were still being written in its

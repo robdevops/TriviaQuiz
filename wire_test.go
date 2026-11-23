@@ -13,6 +13,7 @@ type (
 	callContext   = addon.Context
 	toolResult    = addon.Result
 	outboxPage    = addon.Page
+	outboxOp      = addon.Op
 	sampleRequest = addon.SampleRequest
 	sampleResult  = addon.SampleResult
 )

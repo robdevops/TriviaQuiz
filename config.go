@@ -33,7 +33,7 @@ const (
 	defaultQuestions = 5
 	minTime          = 10 * time.Second
 	maxTime          = 2 * time.Minute
-	defaultTime      = 40 * time.Second
+	defaultTime      = 35 * time.Second
 	// maxQuiz is the longest a whole quiz may run, to fit well within the
 	// bot's watch_max (1h by default).
 	maxQuiz          = 30 * time.Minute

@@ -449,14 +449,42 @@ func lengthLabel(d time.Duration) string {
 	}
 }
 
-// arm sets q's timer to reveal its open question once its time is up.
-// s.mu is held.
+// arm sets q's timer to reveal its open question once its time is up,
+// and its warning, warnBefore its deadline: unless the question is
+// shorter than warnMin, or has less than warnBefore left, such as once it
+// ended early. s.mu is held.
 func (s *server) arm(q *quiz) {
-	chat, id, current := q.Chat, q.ID, q.Current
+	chat, id, current, deadline := q.Chat, q.ID, q.Current, q.Deadline
 	if t := s.timers[chat]; t != nil {
 		t.Stop()
 	}
-	s.timers[chat] = s.clock.AfterFunc(q.Deadline.Add(settle).Sub(s.clock.Now()), func() { s.timeUp(chat, id, current) })
+	now := s.clock.Now()
+	s.timers[chat] = s.clock.AfterFunc(q.Deadline.Add(settle).Sub(now), func() { s.timeUp(chat, id, current) })
+	if t := s.warns[chat]; t != nil {
+		t.Stop()
+		delete(s.warns, chat)
+	}
+	if at := q.Deadline.Add(-warnBefore); q.Deadline.Sub(q.Opened) >= warnMin && at.After(now) {
+		s.warns[chat] = s.clock.AfterFunc(at.Sub(now), func() { s.warn(chat, id, current, deadline) })
+	}
+}
+
+// warn reacts ⏰ to question current of the quiz id in chat, if it is
+// still open with the deadline it was armed for, so not ended early. A
+// question with no post ID, its post refused by the outbox, gets none.
+// The reaction counts against the chat's rate like a post: one more per
+// question fits the bot's default.
+func (s *server) warn(chat, id string, current int, deadline time.Time) {
+	s.mu.Lock()
+	q := s.quizzes[chat]
+	if q == nil || q.ID != id || q.Lobby || q.Current != current || !q.Deadline.Equal(deadline) || q.Post == "" {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.warns, chat)
+	s.queue(addon.Op{Op: "react", Chat: q.Chat, Post: q.Post, Emoji: "⏰"})
+	s.mu.Unlock()
+	s.save()
 }
 
 // timeUp reveals question current of the quiz id in chat, if it is still
@@ -630,7 +658,7 @@ func (s *server) finish(c *addon.Context) addon.Result {
 // results. s.mu is held.
 func (s *server) end(q *quiz, now time.Time) string {
 	delete(s.quizzes, q.Chat)
-	for _, m := range []map[string]stopper{s.timers, s.asks} {
+	for _, m := range []map[string]stopper{s.timers, s.asks, s.warns} {
 		if t := m[q.Chat]; t != nil {
 			t.Stop()
 			delete(m, q.Chat)
@@ -830,7 +858,7 @@ func (s *server) callOffLocked(q *quiz, why string) {
 	}
 	s.queue(addon.Op{Op: "unwatch", Chat: q.Chat, Watch: q.ID})
 	delete(s.quizzes, q.Chat)
-	for _, m := range []map[string]stopper{s.timers, s.asks} {
+	for _, m := range []map[string]stopper{s.timers, s.asks, s.warns} {
 		if t := m[q.Chat]; t != nil {
 			t.Stop()
 			delete(m, q.Chat)

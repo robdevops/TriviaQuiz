@@ -7,7 +7,7 @@ the quiz's messages, the bot reveals each answer, and at the end it ranks
 the players and keeps a 7-day scoreboard.
 
 ```
-/quiz                      a quiz of general knowledge (QUIZ_QUESTIONS questions of QUIZ_TIME, default 5 of 40s)
+/quiz                      a quiz of general knowledge (QUIZ_QUESTIONS questions of QUIZ_TIME, default 5 of 35s)
 /quiz 80s music            a quiz on a topic, up to 60 characters
 /quiz 80s music 5 45s      with a number of questions (1 to 10) and a time for each (10s to 2m), at the end, in either order
 /quiz end, /quiz stop      finish now: the open question's answer and the results (only the player who started it)
@@ -29,6 +29,7 @@ the players and keeps a 7-day scoreboard.
   multiple choice, reply with the letter. For free text, reply with the
   answer: case and small typos don't matter, numbers must be exact.
 - **Changing your mind.** Your last answer before time is up counts.
+- **Hurry up.** The bot reacts ⏰ to a question with 5 seconds left.
 - **Points.** 5, 10 or 15 for an easy, medium or hard question, and 5
   more for the first right answer (marked ⚡).
 - **Ending early.** A question ends once everyone who joined has
@@ -41,7 +42,7 @@ the players and keeps a 7-day scoreboard.
 
 ## Quick start
 
-You need signalbot main at `d685491` or newer, with a model set up, and
+You need signalbot at `c755fc7` or newer, with a model set up, and
 Go 1.27 or newer.
 
 1. **Build it:**
@@ -55,7 +56,8 @@ Go 1.27 or newer.
 2. **Add it to the MCP servers file** (`MCP_CONFIG`). It must be called
    `quiz`. `chats: ["all"]` plays in every group; list group IDs to limit
    it, and add `"dms": true` to play in DMs too. The `model` permission
-   is essential: the bot's model writes the questions.
+   is essential: the bot's model writes the questions. `react` lets the
+   bot put the ⏰ on a question with 5 seconds left.
 
    ```jsonc
    "quiz": {
@@ -63,7 +65,7 @@ Go 1.27 or newer.
      "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
      "addon": {
        "chats": ["all"],
-       "post": true, "watch": true,
+       "post": true, "watch": true, "react": true,
        "model": {"per_hour": 30, "max_tokens": 4000}
      }
    }

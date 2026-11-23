@@ -34,6 +34,7 @@ type server struct {
 	quizzes map[string]*quiz              // by chat
 	timers  map[string]stopper            // each quiz's, by chat
 	asks    map[string]stopper            // each quiz's next question, posted after the gap, by chat
+	warns   map[string]stopper            // each quiz's ⏰ on its open question, warnBefore its deadline, by chat
 	gap     time.Duration                 // between a question's answer and the next question: gapTime, or 0 in most tests
 	writing map[string]bool               // chats whose quiz the model is writing
 	scores  map[string][]score            // by chat, the last scoreDays days
@@ -135,6 +136,11 @@ const (
 	// lateSlack is how late a timer may fire before the next question no
 	// longer fits within the watch.
 	lateSlack = 5 * time.Second
+	// warnBefore is how long before a question's deadline the bot reacts
+	// ⏰ to it; a question shorter than warnMin gets none, as there'd be
+	// little time to warn of.
+	warnBefore = 5 * time.Second
+	warnMin    = 10 * time.Second
 	// gapTime is the pause between a question's answer and the next
 	// question, so players can read the answer.
 	gapTime = 10 * time.Second
@@ -159,6 +165,7 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		quizzes: map[string]*quiz{},
 		timers:  map[string]stopper{},
 		asks:    map[string]stopper{},
+		warns:   map[string]stopper{},
 		gap:     cfg.gap,
 		writing: map[string]bool{},
 		prep:    prepMax,
