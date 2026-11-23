@@ -37,55 +37,41 @@ the players and keeps a 7-day scoreboard.
 - **After the quiz,** for an hour, a reply to one of its messages gets
   "That quiz is over. Start another with /quiz."
 
-## Install
+## Quick start
 
-It needs signalbot main at d685491 or newer. Build it with Go 1.27 or
-newer:
+You need signalbot main at `d685491` or newer, with a model set up, and
+Go 1.27 or newer.
 
-```
-git clone https://github.com/robdevops/chat-plugin-quiz.git
-cd chat-plugin-quiz
-CGO_ENABLED=0 go build -ldflags='-s -w' -o /opt/signalbot-addons/quiz .
-```
+1. **Build it:**
 
-Add it to the MCP servers file (`MCP_CONFIG`). The server must be called
-`quiz`:
+   ```
+   git clone https://github.com/robdevops/chat-plugin-quiz.git
+   cd chat-plugin-quiz
+   CGO_ENABLED=0 go build -ldflags='-s -w' -o /opt/signalbot-addons/quiz .
+   ```
 
-```jsonc
-"quiz": {
-  "command": "/opt/signalbot-addons/quiz",
-  "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
-  "addon": {
-    "chats": ["<group id>"],
-    "post": true, "watch": true,
-    "model": {"per_hour": 30, "max_tokens": 4000}
-  }
-}
-```
+2. **Add it to the MCP servers file** (`MCP_CONFIG`). It must be called
+   `quiz`. Put your group IDs in `chats`, or `["all"]`; add `"dms": true`
+   to play in DMs too. The `model` permission is essential: the bot's
+   model writes the questions.
 
-`chats` takes group IDs, or `["all"]`. Add `"dms": true` to play in DMs.
-The quiz needs these permissions:
+   ```jsonc
+   "quiz": {
+     "command": "/opt/signalbot-addons/quiz",
+     "chat_commands": {"quiz": {"tool": "quiz", "direct": true, "example": "/quiz 80s music", "timeout": "90s"}},
+     "addon": {
+       "chats": ["<group id>"],
+       "post": true, "watch": true,
+       "model": {"per_hour": 30, "max_tokens": 4000}
+     }
+   }
+   ```
 
-- `model`, so the bot's model can write the questions. Keep its
-  `max_tokens` at or above `QUIZ_MAX_TOKENS`.
-- `post`, to post each question, its answer and the results.
-- `watch`, to read the replies, and the reactions that join a lobby.
+3. **Restart signalbot** and type `/quiz` in the group.
 
-The state directory needs no setup: signalbot sets it and the quiz
-creates it. Docker and systemd notes are in
-[the details](docs/DETAILS.md#install-notes).
-
-## Settings
-
-| Variable | Default | Description |
-|---|---|---|
-| `QUIZ_STATE_DIR` | signalbot's `addons/quiz` | Where the quiz keeps its files |
-| `QUIZ_QUESTIONS` | `5` | Questions per quiz when `/quiz` doesn't say, 1 to 10 |
-| `QUIZ_TIME` | `30s` | Time per question when `/quiz` doesn't say, 10s to 2m |
-| `QUIZ_LANGUAGE` | `English` | The language of the questions, by name, up to 40 characters |
-| `QUIZ_DIFFICULTY` | `medium` | `easy`, `medium`, `hard`, or `mixed` (about a third each) |
-| `QUIZ_MAX_TOKENS` | `3000` | The most the model may write for one quiz, 500 to 32000 |
-| `QUIZ_MEMLIMIT` | `64MiB` | Memory limit, written as `GOMEMLIMIT` is |
+Nothing else needs setting. All the settings (such as `QUIZ_DIFFICULTY`
+and `QUIZ_LANGUAGE`), the permissions, and the Docker and systemd notes
+are in [docs/DETAILS.md](docs/DETAILS.md#settings-in-full).
 
 ## Credits and privacy
 
