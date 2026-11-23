@@ -876,7 +876,7 @@ func TestFollowUps(t *testing.T) {
 	if !slices.Equal(asked, []string{capital["q"].(string), peak["q"].(string), planet["q"].(string), landing["q"].(string), "Which gas do plants take in?"}) {
 		t.Errorf("questions %q", asked)
 	}
-	if !strings.Contains(logs.String(), "5 questions of 30s, 3 sampling rounds") || !strings.Contains(logs.String(), "4 rejected, 1 repeats") {
+	if !strings.Contains(logs.String(), "5 questions of 40s, 3 sampling rounds") || !strings.Contains(logs.String(), "4 rejected, 1 repeats") {
 		t.Errorf("log:\n%s", logs)
 	}
 }
@@ -887,7 +887,7 @@ func TestTooFewGood(t *testing.T) {
 	clk, c, model, _ := begin(t)
 	model.add(asJSON(capital, peak), asJSON(capital), asJSON(planet))
 	r := c.quiz("5", from(clk, chat, alice))
-	if !strings.HasPrefix(words(r), "🧠 **Quiz** · 3 questions, 30s each.") || r.Meta == nil {
+	if !strings.HasPrefix(words(r), "🧠 **Quiz** · 3 questions, 40s each.") || r.Meta == nil {
 		t.Errorf("three of five: %q", words(r))
 	}
 	if reqs := model.sent(); len(reqs) != 3 || !strings.Contains(reqs[2].Messages[4].Content.Text, "question 1 repeats another in this quiz") ||
@@ -1200,8 +1200,8 @@ func TestArgs(t *testing.T) {
 	for _, tc := range []struct{ args, prompt, intro string }{
 		{"80s music 5 45s", `Write 5 questions on this topic: "80s music"`, "🧠 **Quiz: 80s music** · 3 questions, 45s each."},
 		{"the year 1984 2m 2", `Write 2 questions on this topic: "the year 1984"`, "🧠 **Quiz: the year 1984** · 2 questions, 2 min each."},
-		{"", `Write 5 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 30s each."},
-		{"7", `Write 7 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 30s each."},
+		{"", `Write 5 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 40s each."},
+		{"7", `Write 7 questions on this topic: general knowledge`, "🧠 **Quiz** · 3 questions, 40s each."},
 		{"[x](y) *z*", `Write 5 questions on this topic: "x(y) z"`, "🧠 **Quiz: x(y) z** · 3 questions"},
 	} {
 		model.add(asJSON(capital, peak, planet))
@@ -1261,7 +1261,7 @@ func TestLongReveal(t *testing.T) {
 	for i := range 30 {
 		c.reply(right, from(clk, chat, fmt.Sprintf("u_player%02d", i)))
 	}
-	clk.Advance(30*time.Second + settle)
+	clk.Advance(defaultTime + settle)
 	c.note()
 	text := c.outbox("0").Ops[1].Text
 	if !strings.HasSuffix(text, "{u_player19} and 10 more") || len([]rune(text)) > maxPost {
@@ -1279,7 +1279,7 @@ func TestConfig(t *testing.T) {
 		return func(k string) string { return m[k] }
 	}
 	c, err := loadConfig(env())
-	if err != nil || c.Questions != 5 || c.Time != 30*time.Second || c.Language != "English" || c.Difficulty != "medium" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
+	if err != nil || c.Questions != 5 || c.Time != 40*time.Second || c.Language != "English" || c.Difficulty != "medium" || c.MaxTokens != 3000 || c.MemLimit != 64<<20 {
 		t.Errorf("defaults %+v %v", c, err)
 	}
 	c, err = loadConfig(env("QUIZ_QUESTIONS", "8", "QUIZ_TIME", "1m", "QUIZ_LANGUAGE", "Deutsch", "QUIZ_DIFFICULTY", "Hard", "QUIZ_MAX_TOKENS", "6000", "QUIZ_MEMLIMIT", "1GiB"))

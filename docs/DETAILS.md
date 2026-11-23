@@ -49,7 +49,7 @@ counts the cost against the chat's `DAILY_BUDGET`.
   the bot sees reactions only as the group's admin. In a DM there is no
   lobby: the questions are written first, then the quiz starts at once.
 - **A pause to read the answer.** When a question ends, its answer comes as
-  a reply to it, and the next question 5 seconds later, with its full time.
+  a reply to it, and the next question 10 seconds later, with its full time.
 - **No waiting once everyone's in.** After a lobby, every question ends as
   soon as all who joined have answered (3s later, for answers still on
   their way). Without one, question 1 runs its full time, whoever answers
@@ -153,7 +153,7 @@ settings, and nothing else.
 |---|---|---|
 | `QUIZ_STATE_DIR` | signalbot's `addons/quiz` | Where the quiz keeps `quiz.json` and its log. Created, mode 700, if missing; the quiz exits at start if it can't create, list and write it |
 | `QUIZ_QUESTIONS` | `5` | A quiz's questions when `/quiz` doesn't say, 1 to 10 |
-| `QUIZ_TIME` | `30s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
+| `QUIZ_TIME` | `40s` | The time for each question when `/quiz` doesn't say, 10s to 2m |
 | `QUIZ_LANGUAGE` | `English` | The language the model writes the questions and answers in, by name (letters, spaces and hyphens, up to 40) |
 | `QUIZ_DIFFICULTY` | `medium` | `easy`, `medium` or `hard` for every question, or `mixed` (about a third each) |
 | `QUIZ_MAX_TOKENS` | `3000` | The most the model may write for one quiz, 500 to 32000; the addon block's `max_tokens` caps it too |
@@ -269,7 +269,7 @@ The quiz adds:
   question's time is up (3s after its deadline, for answers still in the
   bot's queue), it queues the answer and explanation, with who got it right
   as `{u_…}` placeholders, as a post with `replyTo` the question's post,
-  then, 5 seconds later, the next question as a new post. After the last,
+  then, 10 seconds later, the next question as a new post. After the last,
   the results follow as a new post, then an `unwatch`. `/quiz end` (or
   `stop`) answers with the open question's answer and the results itself
   and queues only the `unwatch`; in a lobby it calls the quiz off. A lobby

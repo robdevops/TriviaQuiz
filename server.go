@@ -137,7 +137,7 @@ const (
 	lateSlack = 5 * time.Second
 	// gapTime is the pause between a question's answer and the next
 	// question, so players can read the answer.
-	gapTime = 5 * time.Second
+	gapTime = 10 * time.Second
 	// The lobby: how long after the last join the quiz starts, the players
 	// it needs, and how long it waits for them.
 	lobbyWait  = 30 * time.Second
