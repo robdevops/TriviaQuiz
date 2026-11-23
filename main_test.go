@@ -101,6 +101,7 @@ type fakeModel struct {
 	stop     []string // each reply's stopReason; "" is endTurn
 	refuse   bool
 	busy     bool // as the bot is while it works on a cancelled request
+	empty    int  // how many requests to answer as the bot does an answer with no text
 	hang     bool
 	requests []sampleRequest
 }
@@ -123,6 +124,9 @@ func (m *fakeModel) answer(req sampleRequest) (*sampleResult, *rpcError, bool) {
 		return nil, &rpcError{-32000, "over budget"}, true
 	case m.busy:
 		return nil, &rpcError{-32000, "busy: one request at a time"}, true
+	case m.empty > 0:
+		m.empty--
+		return nil, &rpcError{-32603, "the model gave no answer"}, true
 	case len(m.replies) == 0:
 		return nil, &rpcError{-32603, "no more replies"}, true
 	}
@@ -2123,5 +2127,33 @@ func TestWarnShort(t *testing.T) {
 	page = c.outbox(page.Cursor)
 	if len(page.Ops) != 2 || page.Ops[0].Op != "post" || page.Ops[0].ReplyTo == "" {
 		t.Errorf("a short question's reveal %+v", page)
+	}
+}
+
+// An answer with no text, as when the model's provider fails part way, is
+// asked for once more; twice in a row, the quiz is off.
+func TestNoAnswerRetried(t *testing.T) {
+	clk, c, model, _ := begin(t)
+	model.mu.Lock()
+	model.empty = 1
+	model.mu.Unlock()
+	model.add(asJSON(capital, peak, planet, landing, element))
+	if r := c.quiz("", from(clk, chat, alice)); r.Meta == nil || r.Meta.Watch == nil {
+		t.Fatalf("after one empty answer: %+v", r)
+	}
+	if n := len(model.sent()); n != 2 {
+		t.Errorf("%d requests, want 2", n)
+	}
+	c.quiz("end", from(clk, chat, alice))
+
+	model.mu.Lock()
+	model.empty = 2
+	model.mu.Unlock()
+	model.add(asJSON(capital, peak, planet, landing, element))
+	if r := c.quiz("", from(clk, "c_two", bob)); r.Meta != nil {
+		t.Errorf("after two empty answers: %+v", r)
+	}
+	if n := len(model.sent()); n != 4 {
+		t.Errorf("%d requests, want 4", n)
 	}
 }

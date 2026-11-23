@@ -167,7 +167,13 @@ func (s *server) write(ctx context.Context, chat, topic string, n int) ([]questi
 	system := s.systemPrompt()
 	for round := 0; round <= followUps; round++ {
 		st.rounds++
-		res, err := s.srv.Sample(ctx, chat, addon.SampleRequest{Messages: msgs, SystemPrompt: system, MaxTokens: s.cfg.MaxTokens, Temperature: &temperature})
+		req := addon.SampleRequest{Messages: msgs, SystemPrompt: system, MaxTokens: s.cfg.MaxTokens, Temperature: &temperature}
+		res, err := s.srv.Sample(ctx, chat, req)
+		if noAnswer(err) && ctx.Err() == nil { // the provider failed part way: once more
+			s.log.Printf("the model gave no answer; asking again")
+			st.rounds++
+			res, err = s.srv.Sample(ctx, chat, req)
+		}
 		if err != nil {
 			var refused *addon.BotError
 			isBot := errors.As(err, &refused)
@@ -425,4 +431,11 @@ func (s *server) pruneAsked(now time.Time) {
 			s.asked[chat] = list[i:]
 		}
 	}
+}
+
+// noAnswer reports whether err is the bot saying the model's answer had
+// no text, as when its provider fails part way: worth asking again.
+func noAnswer(err error) bool {
+	var e *addon.BotError
+	return errors.As(err, &e) && e.Code == -32603 && e.Message == "the model gave no answer"
 }
