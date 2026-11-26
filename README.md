@@ -29,11 +29,11 @@ the players and keeps a 7-day scoreboard.
   Telegram the bot sees reactions only as a group admin.
 - **The lobby's buttons.** Where the chat has buttons (not Signal), the
   intro has one row: `✅ 2` (Ready, for anyone; it shows how many joined),
-  then, for the player who started the quiz only, `Rounds: 5` and
-  `Interval: 35s` (each question's time, in seconds), ▶️ (Start; it shows
-  once 2 have joined, and pressing it counts as joining) and ✖️ (Cancel).
-  `Rounds` and `Interval` each switch between what the quiz was started
-  with and double that, up to 10 rounds and 120 seconds. On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
+  then, for the player who started the quiz only, `Rounds: 5`, ▶️ (Start;
+  it shows once 2 have joined, and pressing it counts as joining) and ✖️
+  (Cancel). `Rounds` switches between what the quiz was started with and double
+  that, up to 10; each question's time is the command's (or the
+  default). On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
   instead.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you
   send is an answer.
