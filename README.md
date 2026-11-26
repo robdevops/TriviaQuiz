@@ -11,7 +11,7 @@ the players and keeps a 7-day scoreboard.
 /quiz 80s music            a quiz on a topic, up to 60 characters
 /quiz 80s music 5 45s      with a number of questions (1 to 10) and a time for each (10s to 2m), at the end, in either order
 /quiz start                in the lobby, start now with 2 or more joined; it counts as your join (only the player who started it)
-/quiz wait                 in the lobby, start 30s later each time, up to the 15-minute limit (only the player who started it)
+/quiz wait                 in a lobby without buttons, start 30s later each time, up to the 15-minute limit (only the player who started it)
 /quiz end, /quiz stop      finish now: the open question's answer and the results, or call the lobby off (only the player who started it)
 /quiz scores               this chat's totals over the last 7 days
 ```
@@ -21,19 +21,20 @@ the players and keeps a 7-day scoreboard.
 - **Joining.** In a group, press ✋ Ready under the quiz's intro (on
   Telegram and other chats with buttons), or react to the intro with any
   emoji (Signal; reactions count everywhere). Whoever starts it must join
-  too. It needs at least 2 players.
-  It starts 30 seconds after the last one joins, and is called off if
-  fewer than 2 have joined after 15 minutes. The questions are written
-  while you join; if you're all in first, the bot says "🧠 Writing the
-  questions…" and starts once they're ready. On Telegram the bot sees
-  reactions only as a group admin.
-- **The starter's buttons.** Where the chat has buttons (not Signal), the
-  intro has ✋ Ready for everyone, and under it three for the player who
-  started the quiz only: ▶️ Start
-  (start now, with 2 or more joined; pressing it counts as joining),
-  ✖️ Cancel (call it off) and ⏱ +30s (start 30 seconds later, as often as
-  you like, up to the 15-minute limit). On Signal, type `/quiz start`,
-  `/quiz stop` and `/quiz wait` instead.
+  too. It needs at least 2 players. On Signal it starts 30 seconds after
+  the last one joins; with buttons, when its starter presses ▶️ Start.
+  Either way it is called off if it hasn't started after 15 minutes. The
+  questions are written while you join; if you're all in first, the bot
+  says "🧠 Writing the questions…" and starts once they're ready. On
+  Telegram the bot sees reactions only as a group admin.
+- **The lobby's buttons.** Where the chat has buttons (not Signal), the
+  intro has one row: `✋ Ready: 2` (anyone; it shows how many joined), then,
+  for the player who started the quiz only, `Questions: 5` and
+  `Answer timer: 35s`, ▶️ Start (it shows once 2 have joined; pressing it
+  counts as joining) and ✖️ Cancel. Each setting button switches between
+  what the quiz was started with and double that, up to 10 questions and
+  2 minutes. On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
+  instead.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you
   send is an answer.
 - **Answering.** In a group, reply to one of the quiz's messages. For
@@ -53,7 +54,7 @@ the players and keeps a 7-day scoreboard.
 
 ## Quick start
 
-You need signalbot at `c755fc7` or newer (`c57871e` or newer for the
+You need signalbot at `c755fc7` or newer (`f6a3c5c` or newer for the
 lobby's buttons), with a model set up, and
 Go 1.27 or newer.
 

@@ -40,9 +40,13 @@ counts the cost against the chat's `DAILY_BUDGET`.
   bot shows buttons, press ✋ Ready under it, which the intro then asks for
   instead ("You're in: 2 joined.", or "You're already in."; reactions still
   count). Ready and a reaction are the same join, one per player. Whoever
-  starts it must join too. It starts 30 seconds
+  starts it must join too. Without buttons it starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
-  called off if fewer than 2 have joined after 15 minutes. Those who joined
+  called off if fewer than 2 have joined after 15 minutes ("Not enough
+  players joined, so the quiz is off."). With buttons there is no
+  countdown: only the starter starts it, and it is called off after 15
+  minutes all the same (with 2 or more joined, "Nobody pressed ▶️ Start, so
+  the quiz is off."). Those who joined
   are the players every question waits for; anyone may still answer. The
   intro comes at once, and the model writes the questions while players
   join. If the lobby is ready first, the bot posts "🧠 Writing the
@@ -55,17 +59,35 @@ counts the cost against the chat's `DAILY_BUDGET`.
   lobby: the questions are written first, then the quiz starts at once.
 - **The starter's controls.** In a lobby, the player who started the quiz
   can start it now (`/quiz start`, or ▶️ Start), which counts as their join
-  and needs 2 joined, and goes exactly as when the countdown runs out
-  (waiting for the questions if they aren't written yet); call it off
-  (`/quiz stop` or `end`, or ✖️ Cancel, which posts "The quiz is off.");
-  or put the start off by 30 seconds (`/quiz wait`, or ⏱ +30s), as often
-  as they like, for later countdowns too, up to the 15-minute limit
-  ("Can't wait any longer."). The buttons come under the intro where the
-  bot shows buttons (not on Signal), below ✋ Ready; anyone else pressing one gets "Only
-  the player who started this quiz can do that.", and a press once the
-  lobby is over, ✋ Ready's too, gets "That quiz has already started." or
-  "That quiz is over.". A second `/quiz` in the lobby gets "A quiz is waiting for
-  players: react to its message to join, or /quiz start."
+  and needs 2 joined ("Waiting for at least 2 players: react to join.", or
+  "press ✋ Ready to join." where the bot shows buttons), and goes exactly
+  as when the countdown runs out (waiting for the questions if they aren't
+  written yet); call it off (`/quiz stop` or `end`, or ✖️ Cancel, which
+  posts "The quiz is off."); or, without buttons, put the start off by 30
+  seconds (`/quiz wait`), as often as they like, for later countdowns too,
+  up to the 15-minute limit ("Can't wait any longer."). With buttons,
+  `/quiz wait` answers that there's no countdown.
+- **The lobby's buttons.** Where the bot shows buttons (not on Signal),
+  the intro has one row: `✋ Ready: N`, anyone's, with how many joined;
+  the starter's two settings, `Questions: N` and `Answer timer: 35s`; ▶️
+  Start, once 2 have joined (it goes again if they drop below 2); and ✖️
+  Cancel. The intro then says to press ✋ Ready, that the starter presses
+  ▶️ Start once everyone's in and can change the settings first, and
+  leaves the number of questions and their time to the buttons. Each
+  setting has two modes: what the quiz was started with (the defaults or
+  the command's) and double that, up to the game's limit (10 questions,
+  2 minutes); a press switches between them, its pop-up the new value
+  ("Questions: 10"), and one started at the limit answers "Already the
+  most.". More questions than are written are written in the background,
+  and fewer just plays the first ones; a setting can't change once
+  ▶️ Start is waiting for the questions. Every join, leave or setting
+  replaces the row under the intro. Anyone else pressing one of the
+  starter's gets "Only the player who started this quiz can do that.",
+  and a press once the lobby is over, ✋ Ready's too, gets "That quiz has
+  already started." or "That quiz is over.". A second `/quiz` in the
+  lobby gets "A quiz is waiting for players: react to its message to
+  join, or /quiz start." (with buttons: "press ✋ Ready under its message
+  to join.")
 - **A pause to read the answer.** When a question ends, its answer comes as
   a reply to it, and the next question 10 seconds later, with its full time.
 - **No waiting once everyone's in.** After a lobby, every question ends as
@@ -88,8 +110,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
 ## Install notes
 
 It needs signalbot at c755fc7 or newer, for MCP sampling, reply and
-reaction watches, and reactions to its own posts; c57871e or newer for
-the lobby's ▶️ Start, ✖️ Cancel and ⏱ +30s buttons. A bot without a model,
+reaction watches, and reactions to its own posts; f6a3c5c or newer for
+the lobby's buttons, which it updates with the outbox's `buttons` op. A bot without a model,
 or without the model permission, gets "The quiz needs the bot's model:
 give the quiz addon the model permission." Get the code and build it
 with Go 1.27 or newer, as a static binary, which the Docker image needs
@@ -267,11 +289,18 @@ The quiz adds:
   watch's tool) and `quiz_press` (`{press}`, the lobby's buttons'
   `onPress`), all for the bot alone, so none is offered to the model.
 - In a group's lobby, on a bot whose capability says `buttons`, the intro's
-  result carries two rows of buttons: ✋ Ready, data `ready:<id>`, for
-  anyone, then the starter's `start:<id>`, `cancel:<id>` and `wait:<id>`,
-  with `onPress: "quiz_press"`. Ready joins the presser (`_meta` sender) as
-  a reaction does. A press is all in memory, its
-  posts queued in the outbox, so it answers at once with the pop-up; the
+  result carries one row of at most 5 buttons: ✋ Ready, data
+  `ready:<id>`, for anyone, then the starter's `t1:<id>` (questions),
+  `t2:<id>` (answer timer), `start:<id>` (once 2 have joined) and
+  `cancel:<id>`, with `onPress: "quiz_press"`. Ready joins the presser
+  (`_meta` sender) as a reaction does. Each join, leave or setting queues
+  an outbox op `{op: "buttons", chat, watch: <id>, buttons}` with the
+  new row, replacing the buttons under the intro and keeping its text.
+  `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.".
+  Such a lobby has no countdown, and remembers that across a restart. Its
+  watch runs to 15 minutes, plus 2 for writing more questions, plus the
+  quiz at the larger settings. A press is all in memory, its posts and
+  ops queued in the outbox, so it answers at once with the pop-up; the
   lobby's timer and a press take the same lock, so the quiz starts once.
 - `/quiz` checks that the bot offered `sampling` and, in the extension's
   capability, `watchReplies` (and `watchReactions`, for a lobby). The

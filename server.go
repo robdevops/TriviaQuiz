@@ -31,23 +31,32 @@ type server struct {
 	rand   *mrand.Rand
 
 	mu      sync.Mutex
-	quizzes map[string]*quiz              // by chat
-	timers  map[string]stopper            // each quiz's, by chat
-	asks    map[string]stopper            // each quiz's next question, posted after the gap, by chat
-	warns   map[string]stopper            // each quiz's ⏰ on its open question, warnBefore its deadline, by chat
-	gap     time.Duration                 // between a question's answer and the next question: gapTime, or 0 in most tests
-	writing map[string]bool               // chats whose quiz the model is writing
-	scores  map[string][]score            // by chat, the last scoreDays days
-	asked   map[string][]stamp            // by chat, the questions of the last askedDays days
-	prep    time.Duration                 // how long a lobby's questions may take to write: prepMax, or less in tests
-	preps   map[string]context.CancelFunc // stops writing a lobby's questions, by quiz
-	life    context.Context               // the session's, while serve runs: preparation ends with it
+	quizzes map[string]*quiz   // by chat
+	timers  map[string]stopper // each quiz's, by chat
+	asks    map[string]stopper // each quiz's next question, posted after the gap, by chat
+	warns   map[string]stopper // each quiz's ⏰ on its open question, warnBefore its deadline, by chat
+	gap     time.Duration      // between a question's answer and the next question: gapTime, or 0 in most tests
+	writing map[string]bool    // chats whose quiz the model is writing
+	scores  map[string][]score // by chat, the last scoreDays days
+	asked   map[string][]stamp // by chat, the questions of the last askedDays days
+	prep    time.Duration      // how long a lobby's questions may take to write: prepMax, or less in tests
+	preps   map[string]prepRun // the writing of a lobby's questions, by quiz
+	prepGen int                // the last prepRun's gen
+	life    context.Context    // the session's, while serve runs: preparation ends with it
 	// stopping is set once the session is ending, before a sampling
 	// request fails for it, so preparation leaves its quiz as it is.
 	stopping bool
 
 	prepWG sync.WaitGroup // the preparations running
 	saveMu sync.Mutex     // one save at a time, so the last one written is the newest
+}
+
+// prepRun is one run writing a lobby's questions: its stop, and which run
+// it is, so a run stopped and replaced, by a toggle back and forth, leaves
+// the next alone.
+type prepRun struct {
+	stop context.CancelFunc
+	gen  int
 }
 
 // quiz is one chat's quiz. Its answers are kept only as right or wrong:
@@ -74,10 +83,18 @@ type quiz struct {
 	Joined    []string          `json:"joined,omitempty"`    // who has joined
 	LastJoin  time.Time         `json:"lastJoin,omitempty"`  // when the last player joined: the quiz starts lobbyWait after
 	Extra     time.Duration     `json:"extra,omitempty"`     // the starter's extra wait on top of lobbyWait, from /quiz wait or ⏱ +30s
-	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers
-	Seq       int               `json:"seq"`                 // the answers recorded so far, to break ties
-	Points    map[string]int    `json:"points"`              // by player
-	Right     map[string]int    `json:"right"`               // questions right, by player
+	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers; with buttons, unless started
+	// Buttons marks a lobby on a bot that shows buttons: one row, ✋ Ready
+	// and the starter's toggles, ▶️ Start and ✖️ Cancel, and no countdown:
+	// only the starter starts it. BaseWant and BaseTime are what it opened
+	// with, each toggle's first mode; the second doubles it, up to the
+	// limit.
+	Buttons  bool           `json:"buttons,omitempty"`
+	BaseWant int            `json:"baseWant,omitempty"`
+	BaseTime time.Duration  `json:"baseTime,omitempty"`
+	Seq      int            `json:"seq"`    // the answers recorded so far, to break ties
+	Points   map[string]int `json:"points"` // by player
+	Right    map[string]int `json:"right"`  // questions right, by player
 }
 
 // question is one question as played: its choices already shuffled.
@@ -169,7 +186,7 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		gap:     cfg.gap,
 		writing: map[string]bool{},
 		prep:    prepMax,
-		preps:   map[string]context.CancelFunc{},
+		preps:   map[string]prepRun{},
 		scores:  map[string][]score{},
 		asked:   map[string][]stamp{},
 	}
@@ -201,6 +218,9 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 			q.Right = map[string]int{}
 		}
 		s.quizzes[q.Chat] = q
+		if q.Preparing && len(q.Questions) > 0 { // more were being written: it plays those it has
+			q.Preparing, q.Waiting = false, false
+		}
 		if q.Preparing { // its questions were being written: they are lost
 			s.callOffLocked(q, restarted)
 			interrupted++

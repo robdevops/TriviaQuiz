@@ -2207,23 +2207,92 @@ func startsAt(c *client, chat string) time.Time {
 	return startAt(c.s.quizzes[chat])
 }
 
-// The lobby's answer has the starter's three buttons, on a bot that shows
-// buttons, in a group; none in a DM, or on a bot without them.
+// gold is one more question, for a lobby's top-up.
+var gold = textQ("What is the chemical symbol for gold?", "easy", "Au")
+
+// posts are ops without the buttons ops: what the chat sees posted.
+func posts(ops []outboxOp) []outboxOp {
+	return slices.DeleteFunc(slices.Clone(ops), func(o outboxOp) bool { return o.Op == "buttons" })
+}
+
+// waitPosts is waitOps counting only posts, unwatches and reactions, and
+// returns those.
+func waitPosts(t *testing.T, c *client, cursor string, n int) outboxPage {
+	t.Helper()
+	var p outboxPage
+	waitFor(t, fmt.Sprintf("%d posts", n), func() bool {
+		for len(c.notes) > 0 {
+			<-c.notes
+		}
+		p = c.outbox(cursor)
+		return len(posts(p.Ops)) >= n
+	})
+	p.Ops = posts(p.Ops)
+	return p
+}
+
+// labels are the labels of rows, which must be one row.
+func labels(t *testing.T, rows [][]addon.Button) []string {
+	t.Helper()
+	if len(rows) != 1 {
+		t.Fatalf("%d rows, want 1: %+v", len(rows), rows)
+	}
+	var l []string
+	for _, b := range rows[0] {
+		l = append(l, b.Label)
+	}
+	return l
+}
+
+// lastRow waits for a buttons op after cursor for the quiz id, checks
+// that it is the newest op, and returns its labels and the cursor after
+// it.
+func lastRow(t *testing.T, c *client, cursor, id string) ([]string, string) {
+	t.Helper()
+	p := waitOps(t, c, cursor, 1)
+	o := p.Ops[len(p.Ops)-1]
+	if o.Op != "buttons" || o.Chat != chat || o.Watch != id {
+		t.Fatalf("buttons op %+v", o)
+	}
+	return labels(t, o.Buttons), p.Cursor
+}
+
+// The lobby's answer has one row of buttons, on a bot that shows buttons,
+// in a group: ✋ Ready with its count, the two toggles and ✖️ Cancel; its
+// texts say to press, not to react. None in a DM, or on a bot without
+// them, where the texts stay as they were.
 func TestLobbyButtons(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet), asJSON(landing, element, capital))
 	release()
+	began := clk.Now()
 	r := c.quiz("3 20s", from(clk, chat, alice))
 	id := quizID(t, c, chat)
-	want := [][]addon.Button{
-		{{Label: "✋ Ready", Data: "ready:" + id}},
-		{{Label: "▶️ Start", Data: "start:" + id}, {Label: "✖️ Cancel", Data: "cancel:" + id}, {Label: "⏱ +30s", Data: "wait:" + id}},
-	}
+	want := [][]addon.Button{{
+		{Label: "✋ Ready: 0", Data: "ready:" + id},
+		{Label: "Questions: 3", Data: "t1:" + id},
+		{Label: "Answer timer: 20s", Data: "t2:" + id},
+		{Label: "✖️ Cancel", Data: "cancel:" + id},
+	}}
 	if r.Meta == nil || r.Meta.Watch == nil || !reflect.DeepEqual(r.Meta.Buttons, want) || r.Meta.OnPress != "quiz_press" {
 		t.Fatalf("lobby answer %+v", r.Meta)
 	}
-	if got := words(r); !strings.Contains(got, "👋 **Press ✋ Ready to join**, whoever started it too") || strings.Contains(got, "React to this message") {
+	// The watch covers the toggles' larger settings, after the lobby and a
+	// top-up of the questions.
+	if until := began.Add(lobbyMax + prepMax + 6*(40*time.Second+settle) + watchSlack).Format(time.RFC3339); r.Meta.Watch.Until != until {
+		t.Errorf("until %s, want %s", r.Meta.Watch.Until, until)
+	}
+	got := words(r)
+	for _, s := range []string{"👋 **Press ✋ Ready to join**, whoever started it too", "presses ▶️ Start once everyone's in", "change the number of questions and the answer timer with the buttons"} {
+		if !strings.Contains(got, s) {
+			t.Errorf("intro with buttons lacks %q: %q", s, got)
+		}
+	}
+	if strings.Contains(strings.ToLower(got), "react") || strings.Contains(got, "30 seconds") {
 		t.Errorf("intro with buttons %q", got)
+	}
+	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is waiting for players: press ✋ Ready under its message to join." {
+		t.Errorf("a second /quiz in the lobby: %q", got)
 	}
 	waitPrepared(t, c, chat)
 	dm := from(clk, "c_dm", alice)
@@ -2237,14 +2306,104 @@ func TestLobbyButtons(t *testing.T) {
 	release()
 	if r := c.quiz("3 20s", from(clk, chat, alice)); r.Meta == nil || r.Meta.Watch == nil || r.Meta.Buttons != nil || r.Meta.OnPress != "" {
 		t.Errorf("buttons on a bot without them: %+v", r.Meta)
-	} else if got := words(r); !strings.Contains(got, "👋 **React to this message with any emoji to join**") || strings.Contains(got, "Ready") {
+	} else if got := words(r); !strings.HasPrefix(got, "🧠 **Quiz** · 3 questions, 20s each.\n👋 **React to this message with any emoji to join**, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.") || strings.Contains(got, "Ready") {
 		t.Errorf("intro without buttons %q", got)
+	}
+	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is waiting for players: react to its message to join, or /quiz start." {
+		t.Errorf("a second /quiz in the lobby without buttons: %q", got)
 	}
 	waitPrepared(t, c, chat)
 }
 
-// ▶️ Start is the starter's alone; it counts as their join, needs
-// minPlayers, and starts the quiz at once; after, a press only says so.
+// Every join and leave, by ✋ Ready or by reaction, replaces the row with
+// the new count, under the lobby's own answer; ▶️ Start shows from 2
+// joined, and goes again below 2.
+func TestPressReady(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet))
+	release()
+	c.quiz("3 1m", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 joined." {
+		t.Errorf("bob's ready %q", got)
+	}
+	p := waitOps(t, c, "0", 1)
+	one := [][]addon.Button{{
+		{Label: "✋ Ready: 1", Data: "ready:" + id},
+		{Label: "Questions: 3", Data: "t1:" + id},
+		{Label: "Answer timer: 1 min", Data: "t2:" + id},
+		{Label: "✖️ Cancel", Data: "cancel:" + id},
+	}}
+	if len(p.Ops) != 1 || p.Ops[0].Op != "buttons" || p.Ops[0].Chat != chat || p.Ops[0].Watch != id || !reflect.DeepEqual(p.Ops[0].Buttons, one) {
+		t.Fatalf("buttons op %+v", p.Ops)
+	}
+	cursor := p.Cursor
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != alreadyIn {
+		t.Errorf("bob's second ready %q", got)
+	}
+	c.react(false, from(clk, chat, bob)) // a reaction after it changes nothing
+	if p := c.outbox(cursor); len(p.Ops) != 0 {
+		t.Errorf("ops with no change: %+v", p.Ops)
+	}
+	c.react(false, from(clk, chat, alice)) // a reaction is a join too
+	two := [][]addon.Button{{
+		{Label: "✋ Ready: 2", Data: "ready:" + id},
+		{Label: "Questions: 3", Data: "t1:" + id},
+		{Label: "Answer timer: 1 min", Data: "t2:" + id},
+		{Label: "▶️ Start", Data: "start:" + id},
+		{Label: "✖️ Cancel", Data: "cancel:" + id},
+	}}
+	p = waitOps(t, c, cursor, 1)
+	if len(p.Ops) != 1 || !reflect.DeepEqual(p.Ops[0].Buttons, two) || p.Ops[0].Watch != id {
+		t.Fatalf("buttons at 2 %+v", p.Ops)
+	}
+	c.react(true, from(clk, chat, bob)) // bob takes his back: he leaves, and Start goes
+	l, cursor := lastRow(t, c, p.Cursor, id)
+	if !slices.Equal(l, []string{"✋ Ready: 1", "Questions: 3", "Answer timer: 1 min", "✖️ Cancel"}) {
+		t.Errorf("after a leave %v", l)
+	}
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 joined." {
+		t.Errorf("bob's ready again %q", got)
+	}
+	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✋ Ready: 2", "Questions: 3", "Answer timer: 1 min", "▶️ Start", "✖️ Cancel"}) {
+		t.Errorf("back at 2 %v", l)
+	}
+	clk.Advance(5 * lobbyWait) // no countdown
+	if p := posts(c.outbox("0").Ops); len(p) != 0 {
+		t.Fatalf("started on its own: %+v", p)
+	}
+	if got := c.press("start:"+id, from(clk, chat, alice)); got != starting {
+		t.Errorf("the start %q", got)
+	}
+	page := waitPosts(t, c, "0", 1)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
+		t.Fatalf("question 1 %+v", page)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{alice, bob}) {
+		t.Errorf("quiz %+v", q)
+	}
+	c.s.mu.Unlock()
+	for _, data := range []string{"ready:" + id, "t1:" + id, "t2:" + id, "start:" + id, "cancel:" + id} {
+		if got := c.press(data, from(clk, chat, "u_carol")); got != alreadyOn {
+			t.Errorf("%s after the start %q", data, got)
+		}
+	}
+	if got := c.press("wait:"+id, from(clk, chat, alice)); got != quizOver {
+		t.Errorf("an old +30s press %q", got)
+	}
+	if got := c.press("ready:qold", from(clk, chat, "u_carol")); got != quizOver {
+		t.Errorf("a ready under an older quiz %q", got)
+	}
+	c.quiz("end", from(clk, chat, alice))
+	if got := c.press("ready:"+id, from(clk, chat, "u_carol")); got != quizOver {
+		t.Errorf("a ready once over %q", got)
+	}
+}
+
+// ▶️ Start is the starter's alone; it counts as their join, and starts
+// the quiz at once; typed with fewer than 2, it says to press ✋ Ready.
 func TestPressStart(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet))
@@ -2255,40 +2414,33 @@ func TestPressStart(t *testing.T) {
 	if got := c.press("start:"+id, from(clk, chat, bob)); got != onlyStarter {
 		t.Errorf("bob's press %q", got)
 	}
-	if got := c.press("start:"+id, from(clk, chat, alice)); got != needPlayers {
-		t.Errorf("a press alone %q", got)
+	if got := words(c.quiz("start", from(clk, chat, alice))); got != needReady {
+		t.Errorf("a start alone %q", got)
 	}
-	if p := c.outbox("0"); len(p.Ops) != 0 {
-		t.Fatalf("started with one player: %+v", p)
+	l, cursor := lastRow(t, c, "0", id) // the start was alice's join
+	if !slices.Equal(l, []string{"✋ Ready: 1", "Questions: 3", "Answer timer: 1 min", "✖️ Cancel"}) {
+		t.Errorf("after alice's start %v", l)
 	}
-	c.react(false, from(clk, chat, bob)) // alice's press was her join: 2, so the countdown runs
-	if at := startsAt(c, chat); !at.Equal(clk.Now().Add(lobbyWait)) {
-		t.Errorf("countdown to %s", at)
+	if got := words(c.quiz("wait", from(clk, chat, alice))); got != noCountdown {
+		t.Errorf("/quiz wait %q", got)
 	}
-	clk.Advance(10 * time.Second)
+	c.react(false, from(clk, chat, bob))
+	if l, _ := lastRow(t, c, cursor, id); len(l) != 5 || l[3] != "▶️ Start" {
+		t.Errorf("at 2 %v", l)
+	}
+	clk.Advance(lobbyWait)
+	if p := posts(c.outbox("0").Ops); len(p) != 0 {
+		t.Fatalf("started on its own: %+v", p)
+	}
 	if got := c.press("start:"+id, from(clk, chat, alice)); got != starting {
 		t.Errorf("the start %q", got)
 	}
-	page := waitOps(t, c, "0", 1)
+	page := waitPosts(t, c, "0", 1)
 	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
 		t.Fatalf("question 1 %+v", page)
 	}
-	c.s.mu.Lock()
-	if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{alice, bob}) || !q.Started.Equal(clk.Now()) {
-		t.Errorf("quiz %+v", q)
-	}
-	c.s.mu.Unlock()
 	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is on: question 1 of 3." {
 		t.Errorf("a second /quiz once on: %q", got)
-	}
-	for _, data := range []string{"start:" + id, "cancel:" + id, "wait:" + id} {
-		if got := c.press(data, from(clk, chat, alice)); got != alreadyOn {
-			t.Errorf("%s after the start: %q", data, got)
-		}
-	}
-	clk.Advance(lobbyWait) // the old countdown's time: nothing more
-	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
-		t.Errorf("more posts at the countdown's end: %+v", p)
 	}
 	if got := c.press("start:qold", from(clk, chat, alice)); got != quizOver {
 		t.Errorf("a press under an older quiz %q", got)
@@ -2302,8 +2454,182 @@ func TestPressStart(t *testing.T) {
 	}
 }
 
-// ▶️ Start while the questions are being written waits for them, as the
-// countdown's end does.
+// With buttons there is no countdown: the lobby waits for ▶️ Start, and is
+// called off at lobbyMax all the same, with enough players or without,
+// across a restart too.
+func TestButtonsNoCountdown(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet), asJSON(landing, element, gold))
+	release()
+	began := clk.Now()
+	c.quiz("3 20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	c.press("ready:"+id, from(clk, chat, alice))
+	c.press("ready:"+id, from(clk, chat, bob))
+	clk.Advance(10 * time.Minute)
+	dir := c.s.cfg.StateDir
+	c.close()
+	clk = &fakeClock{now: clk.Now()}
+	c = connect(t, testServer(t, dir, clk, &syncBuffer{}), nil)
+	c.initializeCaps(false, true, true, true)
+	clk.Advance(began.Add(lobbyMax).Sub(clk.Now()) - time.Second)
+	if p := posts(c.outbox("0").Ops); len(p) != 0 {
+		t.Fatalf("started on its own: %+v", p)
+	}
+	clk.Advance(time.Second)
+	page := waitPosts(t, c, "0", 2)
+	if len(page.Ops) != 2 || page.Ops[0].Text != notStarted || page.Ops[1].Op != "unwatch" || page.Ops[1].Watch != id {
+		t.Fatalf("called off %+v", page.Ops)
+	}
+
+	clk, c, model, release = buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet))
+	release()
+	began = clk.Now()
+	c.quiz("3 20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	c.press("ready:"+quizID(t, c, chat), from(clk, chat, bob))
+	clk.Advance(lobbyMax)
+	page = waitPosts(t, c, "0", 2)
+	if len(page.Ops) != 2 || page.Ops[0].Text != notEnough || page.Ops[1].Op != "unwatch" {
+		t.Fatalf("called off with one %+v", page.Ops)
+	}
+}
+
+// The toggles are the starter's: each flips between what the lobby opened
+// with and double that; the game that starts uses them, its extra
+// questions written in the background.
+func TestToggles(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet), asJSON(landing, element, gold))
+	c.quiz("space 3 20s", from(clk, chat, alice)) // its questions wait for release
+	id := quizID(t, c, chat)
+	for _, data := range []string{"t1:" + id, "t2:" + id} {
+		if got := c.press(data, from(clk, chat, bob)); got != onlyStarter {
+			t.Errorf("bob's %s %q", data, got)
+		}
+	}
+	if p := c.outbox("0"); len(p.Ops) != 0 {
+		t.Errorf("ops from refused presses: %+v", p.Ops)
+	}
+	cursor := "0"
+	for _, step := range []struct{ data, popup, label string }{
+		{"t1:", "Questions: 6", "Questions: 6"},
+		{"t2:", "Answer timer: 40s", "Answer timer: 40s"},
+		{"t2:", "Answer timer: 20s", "Answer timer: 20s"},
+		{"t2:", "Answer timer: 40s", "Answer timer: 40s"},
+	} {
+		if got := c.press(step.data+id, from(clk, chat, alice)); got != step.popup {
+			t.Errorf("%s: %q, want %q", step.data, got, step.popup)
+		}
+		var l []string
+		l, cursor = lastRow(t, c, cursor, id)
+		if !slices.Contains(l, step.label) || len(l) != 4 {
+			t.Errorf("after %s %q: %v", step.data, step.popup, l)
+		}
+	}
+	release()
+	waitPrepared(t, c, chat)
+	sent := model.sent()
+	if len(sent) != 2 || !strings.HasPrefix(sent[1].Messages[0].Content.Text, "Write 3 questions on this topic: \"space\"\n") {
+		t.Fatalf("requests %+v", sent)
+	}
+	c.press("ready:"+id, from(clk, chat, bob))
+	if got := c.press("start:"+id, from(clk, chat, alice)); got != starting {
+		t.Fatalf("the start %q", got)
+	}
+	page := waitPosts(t, c, "0", 1)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 6** · easy · 40s\n") {
+		t.Fatalf("question 1 %+v", page.Ops)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; len(q.Questions) != 6 || q.Time != 40*time.Second || !q.Deadline.Equal(clk.Now().Add(40*time.Second)) {
+		t.Errorf("quiz %+v", q)
+	}
+	c.s.mu.Unlock()
+}
+
+// A toggle back while more questions are being written stops writing
+// them, and the game plays as many as it opened with.
+func TestToggleBack(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet))
+	release()
+	c.quiz("3 20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	model.mu.Lock()
+	model.hang = true
+	model.mu.Unlock()
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 6" {
+		t.Fatalf("t1 %q", got)
+	}
+	waitFor(t, "the top-up's request", func() bool { return len(model.sent()) == 2 })
+	if !preparing(c, chat) {
+		t.Fatal("not writing more")
+	}
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 3" {
+		t.Fatalf("t1 back %q", got)
+	}
+	if preparing(c, chat) {
+		t.Fatal("still writing more")
+	}
+	c.press("ready:"+id, from(clk, chat, bob))
+	if got := c.press("start:"+id, from(clk, chat, alice)); got != starting {
+		t.Fatalf("the start %q", got)
+	}
+	page := waitPosts(t, c, "0", 1)
+	if !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3** · easy · 20s\n") {
+		t.Fatalf("question 1 %+v", page.Ops)
+	}
+}
+
+// A toggle doubles up to the game's limit; one opened at the limit stays
+// there, saying so. The defaults come from the settings.
+func TestToggleCaps(t *testing.T) {
+	clk, c, _, _ := buttonBegin(t, true) // the questions are still being written throughout
+	c.quiz("8 1m10s", from(clk, chat, alice))
+	id := quizID(t, c, chat)
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 10" {
+		t.Errorf("t1 %q", got)
+	}
+	if got := c.press("t2:"+id, from(clk, chat, alice)); got != "Answer timer: 2 min" {
+		t.Errorf("t2 %q", got)
+	}
+	if got := c.press("t2:"+id, from(clk, chat, alice)); got != "Answer timer: 1m10s" {
+		t.Errorf("t2 back %q", got)
+	}
+	c.quiz("end", from(clk, chat, alice))
+
+	r := c.quiz("10 2m", from(clk, "c_max", alice))
+	maxID := quizID(t, c, "c_max")
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✋ Ready: 0", "Questions: 10", "Answer timer: 2 min", "✖️ Cancel"}) {
+		t.Errorf("at the limits %v", l)
+	}
+	before := len(c.outbox("0").Ops)
+	for _, data := range []string{"t1:" + maxID, "t2:" + maxID} {
+		if got := c.press(data, from(clk, "c_max", alice)); got != atMost {
+			t.Errorf("%s at the limit %q", data, got)
+		}
+	}
+	if after := len(c.outbox("0").Ops); after != before {
+		t.Errorf("ops from a toggle at the limit: %d, want %d", after, before)
+	}
+	c.quiz("end", from(clk, "c_max", alice))
+
+	r = c.quiz("", from(clk, "c_default", alice))
+	defID := quizID(t, c, "c_default")
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✋ Ready: 0", "Questions: 5", "Answer timer: 35s", "✖️ Cancel"}) {
+		t.Errorf("the defaults %v", l)
+	}
+	if got := c.press("t2:"+defID, from(clk, "c_default", alice)); got != "Answer timer: 1m10s" {
+		t.Errorf("the default doubled %q", got)
+	}
+	c.quiz("end", from(clk, "c_default", alice))
+}
+
+// ▶️ Start while the questions are being written waits for them.
 func TestPressStartWhilePreparing(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet))
@@ -2313,24 +2639,25 @@ func TestPressStartWhilePreparing(t *testing.T) {
 	if got := c.press("start:"+id, from(clk, chat, alice)); got != whenWritten {
 		t.Errorf("the start %q", got)
 	}
-	page := waitOps(t, c, "0", 1)
+	page := waitPosts(t, c, "0", 1)
 	if len(page.Ops) != 1 || page.Ops[0].Text != stillWriting {
 		t.Fatalf("still writing %+v", page)
 	}
 	if got := c.press("start:"+id, from(clk, chat, alice)); got != whenWritten {
 		t.Errorf("a second start %q", got)
 	}
-	if got := c.press("wait:"+id, from(clk, chat, alice)); got != noLater {
-		t.Errorf("a wait once ready %q", got)
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != whenWritten {
+		t.Errorf("a toggle once started %q", got)
 	}
 	release()
-	page = waitOps(t, c, page.Cursor, 1)
+	page = waitPosts(t, c, page.Cursor, 1)
 	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
 		t.Fatalf("question 1 %+v", page)
 	}
 }
 
-// /quiz start is the button typed, under the same rules.
+// /quiz start is the button typed, under the same rules; without buttons,
+// the countdown and its texts are as they were.
 func TestTypedStart(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, false)
 	model.add(asJSON(capital, peak, planet))
@@ -2379,44 +2706,41 @@ func TestPressCancel(t *testing.T) {
 	if got := c.press("cancel:"+id, from(clk, chat, alice)); got != cancelled {
 		t.Errorf("the cancel %q", got)
 	}
-	page := waitOps(t, c, "0", 2)
+	page := waitPosts(t, c, "0", 2)
 	if len(page.Ops) != 2 || page.Ops[0].Text != "The quiz is off." || page.Ops[1].Op != "unwatch" || page.Ops[1].Watch != id {
 		t.Fatalf("cancel %+v", page)
 	}
-	clk.Advance(lobbyWait)
+	clk.Advance(lobbyMax)
 	if p := c.outbox(page.Cursor); len(p.Ops) != 0 {
-		t.Errorf("posts after the cancel: %+v", p)
+		t.Errorf("ops after the cancel: %+v", p)
 	}
-	for _, data := range []string{"start:" + id, "cancel:" + id, "wait:" + id} {
+	for _, data := range []string{"start:" + id, "cancel:" + id, "t1:" + id, "wait:" + id} {
 		if got := c.press(data, from(clk, chat, alice)); got != quizOver {
 			t.Errorf("%s after the cancel: %q", data, got)
 		}
 	}
 }
 
-// ⏱ +30s and /quiz wait put the start off 30s a time, for later
+// Without buttons, /quiz wait puts the start off 30s a time, for later
 // countdowns too, but never past CallOff; the extra wait outlasts a
 // restart.
-func TestPressWait(t *testing.T) {
-	clk, c, model, release := buttonBegin(t, true)
+func TestTypedWait(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, false)
 	model.add(asJSON(capital, peak, planet))
 	release()
 	began := clk.Now()
 	c.quiz("3 20s", from(clk, chat, alice))
 	waitPrepared(t, c, chat)
-	id := quizID(t, c, chat)
-	if got := c.press("wait:"+id, from(clk, chat, bob)); got != onlyStarter {
-		t.Errorf("bob's wait %q", got)
-	}
-	if got := words(c.quiz("wait", from(clk, chat, bob))); got != onlyStarter {
+	wait := func(user string) string { return words(c.quiz("wait", from(clk, chat, user))) }
+	if got := wait(bob); got != onlyStarter {
 		t.Errorf("bob's /quiz wait %q", got)
 	}
 	c.react(false, from(clk, chat, alice))
 	c.react(false, from(clk, chat, bob))
-	if got := c.press("wait:"+id, from(clk, chat, alice)); got != later {
+	if got := wait(alice); got != later {
 		t.Errorf("the wait %q", got)
 	}
-	if got := words(c.quiz("wait", from(clk, chat, alice))); got != later {
+	if got := wait(alice); got != later {
 		t.Errorf("/quiz wait %q", got)
 	}
 	if at := startsAt(c, chat); !at.Equal(clk.Now().Add(3 * lobbyWait)) {
@@ -2435,14 +2759,14 @@ func TestPressWait(t *testing.T) {
 	c.close()
 	clk = &fakeClock{now: clk.Now()}
 	c = connect(t, testServer(t, dir, clk, &syncBuffer{}), nil)
-	c.initializeCaps(false, true, true, true)
+	c.initializeCaps(false, true, true, false)
 	if at := startsAt(c, chat); !at.Equal(clk.Now().Add(3 * lobbyWait)) {
 		t.Errorf("after a restart, starts at %s, want 90s on", at)
 	}
 	// Up to CallOff, and no further.
 	got := ""
 	for i := 0; i < 40 && got != noLater; i++ {
-		got = c.press("wait:"+id, from(clk, chat, alice))
+		got = wait(alice)
 	}
 	if got != noLater {
 		t.Fatalf("no cap: %q", got)
@@ -2451,7 +2775,7 @@ func TestPressWait(t *testing.T) {
 	if at := startsAt(c, chat); !at.Equal(callOff) {
 		t.Errorf("capped at %s, want %s", at, callOff)
 	}
-	if got := c.press("wait:"+id, from(clk, chat, alice)); got != noLater {
+	if got := wait(alice); got != noLater {
 		t.Errorf("a wait at the cap %q", got)
 	}
 	c.react(false, from(clk, chat, "u_dave")) // a join at the cap starts it at CallOff all the same
@@ -2466,9 +2790,10 @@ func TestPressWait(t *testing.T) {
 	}
 }
 
-// A press and the countdown's end together start the quiz once.
+// A start and the countdown's end together, without buttons, start the
+// quiz once.
 func TestPressRacesTimer(t *testing.T) {
-	clk, c, model, release := buttonBegin(t, true)
+	clk, c, model, release := buttonBegin(t, false)
 	release()
 	for i := range 5 {
 		room := fmt.Sprintf("c_race%d", i)
@@ -2503,59 +2828,8 @@ func TestPressRacesTimer(t *testing.T) {
 	}
 }
 
-// ✋ Ready is anyone's join, the starter's too, as a reaction is: it is
-// counted and re-arms the countdown; a second press is already
-// in, and the countdown starts the quiz with those who pressed it.
-func TestPressReady(t *testing.T) {
-	clk, c, model, release := buttonBegin(t, true)
-	model.add(asJSON(capital, peak, planet))
-	release()
-	c.quiz("3 1m", from(clk, chat, alice))
-	waitPrepared(t, c, chat)
-	id := quizID(t, c, chat)
-	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 joined." {
-		t.Errorf("bob's ready %q", got)
-	}
-	if got := c.press("ready:"+id, from(clk, chat, bob)); got != alreadyIn {
-		t.Errorf("bob's second ready %q", got)
-	}
-	c.react(false, from(clk, chat, bob)) // a reaction after it changes nothing
-	clk.Advance(10 * time.Second)
-	if got := c.press("ready:"+id, from(clk, chat, alice)); got != "You're in: 2 joined." {
-		t.Errorf("alice's ready %q", got)
-	}
-	if at := startsAt(c, chat); !at.Equal(clk.Now().Add(lobbyWait)) {
-		t.Errorf("countdown to %s", at)
-	}
-	c.s.mu.Lock()
-	if q := c.s.quizzes[chat]; !slices.Equal(q.Joined, []string{bob, alice}) {
-		t.Errorf("joined %v", q.Joined)
-	}
-	c.s.mu.Unlock()
-	clk.Advance(lobbyWait)
-	page := waitOps(t, c, "0", 1)
-	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
-		t.Fatalf("question 1 %+v", page)
-	}
-	c.s.mu.Lock()
-	if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{bob, alice}) {
-		t.Errorf("quiz %+v", q)
-	}
-	c.s.mu.Unlock()
-	if got := c.press("ready:"+id, from(clk, chat, "u_carol")); got != alreadyOn {
-		t.Errorf("a ready after the start %q", got)
-	}
-	if got := c.press("ready:qold", from(clk, chat, "u_carol")); got != quizOver {
-		t.Errorf("a ready under an older quiz %q", got)
-	}
-	c.quiz("end", from(clk, chat, alice))
-	if got := c.press("ready:"+id, from(clk, chat, "u_carol")); got != quizOver {
-		t.Errorf("a ready once over %q", got)
-	}
-}
-
-// ✋ Ready racing the countdown's end, or the starter's ▶️ Start, starts
-// the quiz once, and a join it makes before the start is a player.
+// ✋ Ready racing the starter's ▶️ Start starts the quiz once, and a join
+// it makes before the start is a player.
 func TestPressReadyRaces(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	release()
@@ -2582,11 +2856,7 @@ func TestPressReadyRaces(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if i%2 == 0 {
-				clk.Advance(lobbyWait)
-			} else {
-				c.s.press(&addon.Context{Chat: room, Sender: alice, Group: true}, "start:"+id)
-			}
+			c.s.press(&addon.Context{Chat: room, Sender: alice, Group: true}, "start:"+id)
 		}()
 		got := c.press("ready:"+id, from(clk, room, "u_carol"))
 		wg.Wait()
@@ -2606,8 +2876,8 @@ func TestPressReadyRaces(t *testing.T) {
 		default:
 			t.Errorf("carol's ready %q", got)
 		}
-		if lobby { // carol's join re-armed the countdown: let it run
-			clk.Advance(lobbyWait)
+		if lobby {
+			t.Errorf("still a lobby after the start")
 		}
 		if n := asked(room); n != 1 {
 			t.Errorf("question 1 asked %d times", n)
