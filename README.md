@@ -29,11 +29,11 @@ the players and keeps a 7-day scoreboard.
   Telegram the bot sees reactions only as a group admin.
 - **The lobby's buttons.** Where the chat has buttons (not Signal), the
   intro has one row: `✋ Ready: 2` (anyone; it shows how many joined), then,
-  for the player who started the quiz only, `Questions: 5` and
-  `Answer timer: 35s`, ▶️ Start (it shows once 2 have joined; pressing it
-  counts as joining) and ✖️ Cancel. Each setting button switches between
-  what the quiz was started with and double that, up to 10 questions and
-  2 minutes. On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
+  for the player who started the quiz only, `Questions: 5`, ▶️ Start (it
+  shows once 2 have joined; pressing it counts as joining) and ✖️ Cancel.
+  `Questions` switches between what the quiz was started with and double
+  that, up to 10; each question's time is the command's (or the
+  default). On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
   instead.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you
   send is an answer.
@@ -41,7 +41,8 @@ the players and keeps a 7-day scoreboard.
   multiple choice, reply with the letter. For free text, reply with the
   answer: case and small typos don't matter, numbers must be exact.
 - **Changing your mind.** Your last answer before time is up counts.
-- **Hurry up.** The bot reacts ⏰ to a question with 5 seconds left.
+- **Hurry up.** The bot reacts ⏰ to a question with 5 seconds left (😱
+  on Telegram, which doesn't take ⏰ as a reaction).
 - **Points.** 5, 10 or 15 for an easy, medium or hard question, and 5
   more for the first right answer (marked ⚡).
 - **Ending early.** A question ends once everyone who joined has
@@ -70,7 +71,7 @@ Go 1.27 or newer.
    `quiz`. `chats: ["all"]` plays in every group; list group IDs to limit
    it, and add `"dms": true` to play in DMs too. The `model` permission
    is essential: the bot's model writes the questions. `react` lets the
-   bot put the ⏰ on a question with 5 seconds left.
+   bot put the ⏰ (😱 on Telegram) on a question with 5 seconds left.
 
    ```jsonc
    "quiz": {

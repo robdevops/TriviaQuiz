@@ -33,8 +33,9 @@ counts the cost against the chat's `DAILY_BUDGET`.
   reply that isn't replaced still counts, as the bot doesn't tell addons of
   deletes). Answers get no reaction, and the reveal says who got it right,
   so changing one gives nothing away.
-- **5 seconds left.** The bot reacts ⏰ to a question with 5 seconds left,
-  unless it has already ended (everyone answered, or `/quiz end`).
+- **5 seconds left.** The bot reacts ⏰ to a question with 5 seconds left
+  (on Telegram 😱, as Telegram takes only some emoji as reactions, and not
+  ⏰), unless it has already ended (everyone answered, or `/quiz end`).
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave), or, where the
   bot shows buttons, press ✋ Ready under it, which the intro then asks for
@@ -69,17 +70,17 @@ counts the cost against the chat's `DAILY_BUDGET`.
   `/quiz wait` answers that there's no countdown.
 - **The lobby's buttons.** Where the bot shows buttons (not on Signal),
   the intro has one row: `✋ Ready: N`, anyone's, with how many joined;
-  the starter's two settings, `Questions: N` and `Answer timer: 35s`; ▶️
-  Start, once 2 have joined (it goes again if they drop below 2); and ✖️
-  Cancel. The intro then says to press ✋ Ready, that the starter presses
-  ▶️ Start once everyone's in and can change the settings first, and
-  leaves the number of questions and their time to the buttons. Each
-  setting has two modes: what the quiz was started with (the defaults or
-  the command's) and double that, up to the game's limit (10 questions,
-  2 minutes); a press switches between them, its pop-up the new value
-  ("Questions: 10"), and one started at the limit answers "Already the
-  most.". More questions than are written are written in the background,
-  and fewer just plays the first ones; a setting can't change once
+  the starter's setting, `Questions: N`; ▶️ Start, once 2 have joined (it
+  goes again if they drop below 2); and ✖️ Cancel. The intro then says to
+  press ✋ Ready, that the starter presses ▶️ Start once everyone's in and
+  can change the number of questions first, and leaves the number of
+  questions to the button; each question's time is the command's (or
+  `QUIZ_TIME`'s), with no button. The setting has two modes: what the
+  quiz was started with (the default or the command's) and double that,
+  up to the game's limit of 10; a press switches between them, its pop-up
+  the new value ("Questions: 10"), and one started at the limit answers
+  "Already the most.". More questions than are written are written in the
+  background, and fewer just plays the first ones; it can't change once
   ▶️ Start is waiting for the questions. Every join, leave or setting
   replaces the row under the intro. Anyone else pressing one of the
   starter's gets "Only the player who started this quiz can do that.",
@@ -157,8 +158,8 @@ add `"dms": true` to play in DMs too. The quiz needs:
 - `post`, for each question, its answer (a reply to the question) and the
   results. The bot drops a post over the chat's post `rate` for good, so the
   quiz asks for no reactions to answers, which take from the same budget;
-- `react`, for the ⏰ on a question with 5 seconds left. Without it the bot
-  fails that op, and the quiz plays on without the ⏰. With the two posts,
+- `react`, for the ⏰ (😱 on Telegram) on a question with 5 seconds left.
+  Without it the bot fails that op, and the quiz plays on without it. With the two posts,
   that's three ops per question: as a question has at least 10 seconds,
   they fit the default rate (20 a minute, bursts of 5);
 - `watch`, to read the replies, and the reactions that join a lobby. A quiz
@@ -289,19 +290,22 @@ The quiz adds:
   watch's tool) and `quiz_press` (`{press}`, the lobby's buttons'
   `onPress`), all for the bot alone, so none is offered to the model.
 - In a group's lobby, on a bot whose capability says `buttons`, the intro's
-  result carries one row of at most 5 buttons: ✋ Ready, data
+  result carries one row of at most 4 buttons: ✋ Ready, data
   `ready:<id>`, for anyone, then the starter's `t1:<id>` (questions),
-  `t2:<id>` (answer timer), `start:<id>` (once 2 have joined) and
+  `start:<id>` (once 2 have joined) and
   `cancel:<id>`, with `onPress: "quiz_press"`. Ready joins the presser
   (`_meta` sender) as a reaction does. Each join, leave or setting queues
   an outbox op `{op: "buttons", chat, watch: <id>, buttons}` with the
   new row, replacing the buttons under the intro and keeping its text.
-  `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.".
+  `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.";
+  `t2:<id>`, from an older lobby's Answer timer, changes nothing: it
+  answers with the time ("Answer timer: 35s") and replaces
+  the row with the current one, without it.
   Such a lobby has no countdown, and remembers that across a restart. Its
   watch runs to 15 minutes, plus 2 for writing more questions, plus the
-  quiz at the larger settings. A press is all in memory, its posts and
-  ops queued in the outbox, so it answers at once with the pop-up; the
-  lobby's timer and a press take the same lock, so the quiz starts once.
+  quiz at the larger number of questions. A press is all in memory, its
+  posts and ops queued in the outbox, so it answers at once with the
+  pop-up; the lobby's timer and a press take the same lock, so the quiz starts once.
 - `/quiz` checks that the bot offered `sampling` and, in the extension's
   capability, `watchReplies` (and `watchReactions`, for a lobby). The
   questions come from one `sampling/createMessage`, charged to the
@@ -335,7 +339,11 @@ The quiz adds:
   called off for want of players posts why, then an `unwatch`. Every post
   stays under the bot's 4000 characters.
 - 5 seconds before a question's deadline, it queues
-  `{op: "react", chat, post, emoji: "⏰"}`, with `post` the op ID of the
+  `{op: "react", chat, post, emoji: "⏰"}` (`"😱"` in a Telegram chat:
+  Telegram takes only some emoji as reactions, and the bot posts no
+  refused one as a message; the chat's network is the call's `_meta`
+  `network`, on a bot on several, else the capability's, kept with the
+  quiz in `quiz.json` from when it began), with `post` the op ID of the
   question's own post, so the bot reacts to its message (`react`
   permission; an unknown post fails the op, with no retry). There is none
   for a question that ended early (everyone answered, or `/quiz end`), one
