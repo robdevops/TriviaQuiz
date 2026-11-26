@@ -173,7 +173,7 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		scores:  map[string][]score{},
 		asked:   map[string][]stamp{},
 	}
-	s.srv = addon.New(addon.Config{Name: "quiz", Title: "Quiz", Version: "1", Tools: s.tools(), Now: clk.Now, Changed: s.save})
+	s.srv = addon.New(addon.Config{Name: "quiz", Title: "Quiz", Tools: s.tools(), Now: clk.Now, Changed: s.save})
 	var st saved
 	if _, err := s.doc.Load(&st); err != nil {
 		return nil, err
