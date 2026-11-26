@@ -32,7 +32,7 @@ the players and keeps a 7-day scoreboard.
   then, for the player who started the quiz only, `Rounds: 5`, ▶️ (Start;
   it shows once 2 have joined, and pressing it counts as joining) and ✖️
   (Cancel). `Rounds` switches between what the quiz was started with and double
-  that, up to 10; each question's time is the command's (or the
+  that, up to 10, and the intro is updated to the new number; each question's time is the command's (or the
   default). On Signal, type `/quiz start`, `/quiz stop` and `/quiz wait`
   instead.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you

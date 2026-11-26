@@ -2352,7 +2352,7 @@ func TestLobbyButtons(t *testing.T) {
 		t.Errorf("until %s, want %s", r.Meta.Watch.Until, until)
 	}
 	got := words(r)
-	for _, s := range []string{"👋 **Press ✅ to join**, whoever started it too", "presses ▶️ when everyone's in", "✖️ calls it off", "change the number of rounds with its button"} {
+	for _, s := range []string{"🧠 **Quiz** · 3 questions, 20s each.\n👋 **Press ✅ to join**, whoever started it too", "presses ▶️ when everyone's in", "✖️ calls it off", "change the number of rounds with its button"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("intro with buttons lacks %q: %q", s, got)
 		}
@@ -2403,7 +2403,7 @@ func TestPressReady(t *testing.T) {
 		{Label: "Rounds: 3", Data: "t1:" + id},
 		{Label: "✖️", Data: "cancel:" + id},
 	}}
-	if len(p.Ops) != 1 || p.Ops[0].Op != "buttons" || p.Ops[0].Chat != chat || p.Ops[0].Watch != id || !reflect.DeepEqual(p.Ops[0].Buttons, one) {
+	if len(p.Ops) != 1 || p.Ops[0].Op != "buttons" || p.Ops[0].Chat != chat || p.Ops[0].Watch != id || !reflect.DeepEqual(p.Ops[0].Buttons, one) || p.Ops[0].Text != "" {
 		t.Fatalf("buttons op %+v", p.Ops)
 	}
 	cursor := p.Cursor
@@ -2582,18 +2582,32 @@ func TestToggles(t *testing.T) {
 		t.Errorf("ops from refused presses: %+v", p.Ops)
 	}
 	cursor := "0"
-	for _, step := range []struct{ data, popup, label string }{
-		{"t1:", "Rounds: 6", "Rounds: 6"},
-		{"t2:", "Answer timer: 20s", "Rounds: 6"},
+	for _, step := range []struct{ data, popup, label, text string }{
+		{"t1:", "Rounds: 6", "Rounds: 6", "🧠 **Quiz: space** · 6 questions, 20s each.\n👋 **Press ✅ to join**"},
+		{"t2:", "Answer timer: 20s", "Rounds: 6", ""},
+		{"t1:", "Rounds: 3", "Rounds: 3", "🧠 **Quiz: space** · 3 questions, 20s each.\n👋 **Press ✅ to join**"},
+		{"t1:", "Rounds: 6", "Rounds: 6", "🧠 **Quiz: space** · 6 questions, 20s each.\n👋 **Press ✅ to join**"},
 	} {
 		if got := c.press(step.data+id, from(clk, chat, alice)); got != step.popup {
 			t.Errorf("%s: %q, want %q", step.data, got, step.popup)
 		}
-		var l []string
-		l, cursor = lastRow(t, c, cursor, id)
-		if !slices.Contains(l, step.label) || len(l) != 3 {
+		p := waitOps(t, c, cursor, 1)
+		o := p.Ops[len(p.Ops)-1]
+		if o.Op != "buttons" || o.Chat != chat || o.Watch != id {
+			t.Fatalf("buttons op %+v", o)
+		}
+		cursor = p.Cursor
+		if l := labels(t, o.Buttons); !slices.Contains(l, step.label) || len(l) != 3 {
 			t.Errorf("after %s %q: %v", step.data, step.popup, l)
 		}
+		if step.text == "" && o.Text != "" || !strings.HasPrefix(o.Text, step.text) {
+			t.Errorf("after %s %q: text %q, want it to begin %q", step.data, step.popup, o.Text, step.text)
+		}
+		c.s.mu.Lock()
+		if q := c.s.quizzes[chat]; step.text != "" && o.Text != introText(q) {
+			t.Errorf("after %s: text %q, not the intro %q", step.data, o.Text, introText(q))
+		}
+		c.s.mu.Unlock()
 	}
 	release()
 	waitPrepared(t, c, chat)

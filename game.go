@@ -361,7 +361,7 @@ func doubled[T int | time.Duration](v, most T) T {
 // buttons too. s.mu is held.
 func (s *server) opening(q *quiz) addon.Result {
 	r := addon.Result{
-		Content: addon.Text(clamp(intro(q, q.Lobby && q.Buttons), maxPost)).Content,
+		Content: addon.Text(introText(q)).Content,
 		Meta: &addon.ResultMeta{Watch: &addon.Watch{
 			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer", Over: "That quiz is over. Start another with /quiz.",
 		}},
@@ -396,6 +396,21 @@ func (s *server) showLocked(q *quiz) {
 	if q.Lobby && q.Buttons {
 		s.queue(addon.Op{Op: "buttons", Chat: q.Chat, Watch: q.ID, Buttons: lobbyRows(q)})
 	}
+}
+
+// retextLocked is showLocked rewriting q's lobby intro too, as it would be
+// written now, after a toggle of its number of rounds. s.mu is held.
+func (s *server) retextLocked(q *quiz) {
+	if q.Lobby && q.Buttons {
+		s.queue(addon.Op{Op: "buttons", Chat: q.Chat, Watch: q.ID, Buttons: lobbyRows(q), Text: introText(q)})
+	}
+}
+
+// introText is q's intro as its opening writes it. A lobby's on a button
+// network shows the number of rounds too, which retextLocked keeps up to
+// date.
+func introText(q *quiz) string {
+	return clamp(intro(q, q.Lobby && q.Buttons), maxPost)
 }
 
 // compose has the model write n questions on topic for chat within ctx,
@@ -502,9 +517,9 @@ func intro(q *quiz, buttons bool) string {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
-	if q.Lobby && buttons { // the buttons show its settings, which the starter may change
-		return fmt.Sprintf("%s\n👋 **Press ✅ to join**, whoever started it too. The starter can change the number of rounds with its button, and presses ▶️ when everyone's in (it shows once at least 2 have joined; ✖️ calls it off).\n%sA question ends as soon as everyone who joined has answered.",
-			title, how)
+	if q.Lobby && buttons { // the starter may change its number of rounds, and the intro is rewritten
+		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **Press ✅ to join**, whoever started it too. The starter can change the number of rounds with its button, and presses ▶️ when everyone's in (it shows once at least 2 have joined; ✖️ calls it off).\n%sA question ends as soon as everyone who joined has answered.",
+			title, size(q), plural(size(q), "question", "questions"), lengthLabel(q.Time), how)
 	}
 	if q.Lobby {
 		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join**, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.\n%sA question ends as soon as everyone who joined has answered.",
@@ -1146,7 +1161,7 @@ func (s *server) toggleLocked(q *quiz) string {
 		s.prepareLocked(q, q.Want-len(q.Questions))
 	}
 	s.enoughLocked(q)
-	s.showLocked(q)
+	s.retextLocked(q)
 	return fmt.Sprintf("Rounds: %d", want)
 }
 

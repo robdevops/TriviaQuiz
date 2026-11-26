@@ -74,8 +74,8 @@ counts the cost against the chat's `DAILY_BUDGET`.
   (Start), once 2 have joined (it goes again if they drop below 2); and ✖️
   (Cancel). The intro then says to press ✅ to join, that the starter
   presses ▶️ when everyone's in (✖️ calls it off) and can change the
-  number of rounds first, and leaves the number of
-  questions to the button; each question's time is the command's (or
+  number of rounds first; its first line shows the number of questions
+  and each one's time, as without buttons; each question's time is the command's (or
   `QUIZ_TIME`'s), with no button. The setting has two modes: what the
   quiz was started with (the default or the command's) and double that,
   up to the game's limit of 10; a press switches between them, its pop-up
@@ -83,7 +83,9 @@ counts the cost against the chat's `DAILY_BUDGET`.
   "Already the most.". More questions than are written are written in the
   background, and fewer just plays the first ones; it can't change once
   ▶️ is waiting for the questions. Every join, leave or setting
-  replaces the row under the intro. Anyone else pressing one of the
+  replaces the row under the intro; a change of the setting rewrites the
+  intro too, with the new number of questions ("5 questions" becomes
+  "10 questions"). Anyone else pressing one of the
   starter's gets "Only the player who started this quiz can do that.",
   and a press once the lobby is over, ✅'s too, gets "That quiz has
   already started." or "That quiz is over.". A second `/quiz` in the
