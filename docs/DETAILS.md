@@ -50,6 +50,19 @@ counts the cost against the chat's `DAILY_BUDGET`.
   minutes, so a new group quiz meanwhile is turned down with "try again". On Telegram
   the bot sees reactions only as the group's admin. In a DM there is no
   lobby: the questions are written first, then the quiz starts at once.
+- **The starter's controls.** In a lobby, the player who started the quiz
+  can start it now (`/quiz start`, or ▶️ Start), which counts as their join
+  and needs 2 joined, and goes exactly as when the countdown runs out
+  (waiting for the questions if they aren't written yet); call it off
+  (`/quiz stop` or `end`, or ✖️ Cancel, which posts "The quiz is off.");
+  or put the start off by 30 seconds (`/quiz wait`, or ⏱ +30s), as often
+  as they like, for later countdowns too, up to the 15-minute limit
+  ("Can't wait any longer."). The buttons come under the intro where the
+  bot shows buttons (not on Signal); anyone else pressing one gets "Only
+  the player who started this quiz can do that.", and a press once the
+  lobby is over gets "That quiz has already started." or "That quiz is
+  over.". A second `/quiz` in the lobby gets "A quiz is waiting for
+  players: react to its message to join, or /quiz start."
 - **A pause to read the answer.** When a question ends, its answer comes as
   a reply to it, and the next question 10 seconds later, with its full time.
 - **No waiting once everyone's in.** After a lobby, every question ends as
@@ -72,9 +85,10 @@ counts the cost against the chat's `DAILY_BUDGET`.
 ## Install notes
 
 It needs signalbot at c755fc7 or newer, for MCP sampling, reply and
-reaction watches, and reactions to its own posts (a bot without a model,
+reaction watches, and reactions to its own posts; c57871e or newer for
+the lobby's ▶️ Start, ✖️ Cancel and ⏱ +30s buttons. A bot without a model,
 or without the model permission, gets "The quiz needs the bot's model:
-give the quiz addon the model permission."). Get the code and build it
+give the quiz addon the model permission." Get the code and build it
 with Go 1.27 or newer, as a static binary, which the Docker image needs
 (it has no shell or runtimes) and systemd is happy with:
 
@@ -246,8 +260,14 @@ The `addon` package speaks the protocol: the handshake, tool calls and
 their cancellation, sampling the bot's model, and the outbox the bot reads.
 The quiz adds:
 
-- `quiz` (`{args}`, a direct command) and `quiz_answer` (`{text}`, the
-  watch's tool), both for the bot alone, so neither is offered to the model.
+- `quiz` (`{args}`, a direct command), `quiz_answer` (`{text}`, the
+  watch's tool) and `quiz_press` (`{press}`, the lobby's buttons'
+  `onPress`), all for the bot alone, so none is offered to the model.
+- In a group's lobby, on a bot whose capability says `buttons`, the intro's
+  result carries one row of buttons, data `start:<id>`, `cancel:<id>` and
+  `wait:<id>`, with `onPress: "quiz_press"`. A press is all in memory, its
+  posts queued in the outbox, so it answers at once with the pop-up; the
+  lobby's timer and a press take the same lock, so the quiz starts once.
 - `/quiz` checks that the bot offered `sampling` and, in the extension's
   capability, `watchReplies` (and `watchReactions`, for a lobby). The
   questions come from one `sampling/createMessage`, charged to the

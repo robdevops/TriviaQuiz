@@ -73,6 +73,7 @@ type quiz struct {
 	Waiting   bool              `json:"waiting,omitempty"`   // its lobby is ready, and waits for its questions
 	Joined    []string          `json:"joined,omitempty"`    // who has joined
 	LastJoin  time.Time         `json:"lastJoin,omitempty"`  // when the last player joined: the quiz starts lobbyWait after
+	Extra     time.Duration     `json:"extra,omitempty"`     // the starter's extra wait on top of lobbyWait, from /quiz wait or ⏱ +30s
 	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers
 	Seq       int               `json:"seq"`                 // the answers recorded so far, to break ties
 	Points    map[string]int    `json:"points"`              // by player

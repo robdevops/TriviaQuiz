@@ -10,7 +10,9 @@ the players and keeps a 7-day scoreboard.
 /quiz                      a quiz of general knowledge (QUIZ_QUESTIONS questions of QUIZ_TIME, default 5 of 35s)
 /quiz 80s music            a quiz on a topic, up to 60 characters
 /quiz 80s music 5 45s      with a number of questions (1 to 10) and a time for each (10s to 2m), at the end, in either order
-/quiz end, /quiz stop      finish now: the open question's answer and the results (only the player who started it)
+/quiz start                in the lobby, start now with 2 or more joined; it counts as your join (only the player who started it)
+/quiz wait                 in the lobby, start 30s later each time, up to the 15-minute limit (only the player who started it)
+/quiz end, /quiz stop      finish now: the open question's answer and the results, or call the lobby off (only the player who started it)
 /quiz scores               this chat's totals over the last 7 days
 ```
 
@@ -23,6 +25,12 @@ the players and keeps a 7-day scoreboard.
   while you join; if you're all in first, the bot says "🧠 Writing the
   questions…" and starts once they're ready. On Telegram the bot sees
   reactions only as a group admin.
+- **The starter's buttons.** Where the chat has buttons (not Signal), the
+  intro has three, for the player who started the quiz only: ▶️ Start
+  (start now, with 2 or more joined; pressing it counts as joining),
+  ✖️ Cancel (call it off) and ⏱ +30s (start 30 seconds later, as often as
+  you like, up to the 15-minute limit). On Signal, type `/quiz start`,
+  `/quiz stop` and `/quiz wait` instead.
 - **DMs.** There is no lobby: the quiz starts at once. Any message you
   send is an answer.
 - **Answering.** In a group, reply to one of the quiz's messages. For
@@ -42,7 +50,8 @@ the players and keeps a 7-day scoreboard.
 
 ## Quick start
 
-You need signalbot at `c755fc7` or newer, with a model set up, and
+You need signalbot at `c755fc7` or newer (`c57871e` or newer for the
+lobby's buttons), with a model set up, and
 Go 1.27 or newer.
 
 1. **Build it:**
