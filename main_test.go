@@ -2215,9 +2215,15 @@ func TestLobbyButtons(t *testing.T) {
 	release()
 	r := c.quiz("3 20s", from(clk, chat, alice))
 	id := quizID(t, c, chat)
-	want := [][]addon.Button{{{Label: "▶️ Start", Data: "start:" + id}, {Label: "✖️ Cancel", Data: "cancel:" + id}, {Label: "⏱ +30s", Data: "wait:" + id}}}
+	want := [][]addon.Button{
+		{{Label: "✋ Ready", Data: "ready:" + id}},
+		{{Label: "▶️ Start", Data: "start:" + id}, {Label: "✖️ Cancel", Data: "cancel:" + id}, {Label: "⏱ +30s", Data: "wait:" + id}},
+	}
 	if r.Meta == nil || r.Meta.Watch == nil || !reflect.DeepEqual(r.Meta.Buttons, want) || r.Meta.OnPress != "quiz_press" {
 		t.Fatalf("lobby answer %+v", r.Meta)
+	}
+	if got := words(r); !strings.Contains(got, "👋 **Press ✋ Ready to join**, whoever started it too") || strings.Contains(got, "React to this message") {
+		t.Errorf("intro with buttons %q", got)
 	}
 	waitPrepared(t, c, chat)
 	dm := from(clk, "c_dm", alice)
@@ -2231,6 +2237,8 @@ func TestLobbyButtons(t *testing.T) {
 	release()
 	if r := c.quiz("3 20s", from(clk, chat, alice)); r.Meta == nil || r.Meta.Watch == nil || r.Meta.Buttons != nil || r.Meta.OnPress != "" {
 		t.Errorf("buttons on a bot without them: %+v", r.Meta)
+	} else if got := words(r); !strings.Contains(got, "👋 **React to this message with any emoji to join**") || strings.Contains(got, "Ready") {
+		t.Errorf("intro without buttons %q", got)
 	}
 	waitPrepared(t, c, chat)
 }
@@ -2492,5 +2500,121 @@ func TestPressRacesTimer(t *testing.T) {
 			t.Errorf("question 1 asked %d times", asked)
 		}
 		c.quiz("end", from(clk, room, alice))
+	}
+}
+
+// ✋ Ready is anyone's join, the starter's too, as a reaction is: it is
+// counted and re-arms the countdown; a second press is already
+// in, and the countdown starts the quiz with those who pressed it.
+func TestPressReady(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet))
+	release()
+	c.quiz("3 1m", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 joined." {
+		t.Errorf("bob's ready %q", got)
+	}
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != alreadyIn {
+		t.Errorf("bob's second ready %q", got)
+	}
+	c.react(false, from(clk, chat, bob)) // a reaction after it changes nothing
+	clk.Advance(10 * time.Second)
+	if got := c.press("ready:"+id, from(clk, chat, alice)); got != "You're in: 2 joined." {
+		t.Errorf("alice's ready %q", got)
+	}
+	if at := startsAt(c, chat); !at.Equal(clk.Now().Add(lobbyWait)) {
+		t.Errorf("countdown to %s", at)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; !slices.Equal(q.Joined, []string{bob, alice}) {
+		t.Errorf("joined %v", q.Joined)
+	}
+	c.s.mu.Unlock()
+	clk.Advance(lobbyWait)
+	page := waitOps(t, c, "0", 1)
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3**") {
+		t.Fatalf("question 1 %+v", page)
+	}
+	c.s.mu.Lock()
+	if q := c.s.quizzes[chat]; q.Lobby || !slices.Equal(q.Players, []string{bob, alice}) {
+		t.Errorf("quiz %+v", q)
+	}
+	c.s.mu.Unlock()
+	if got := c.press("ready:"+id, from(clk, chat, "u_carol")); got != alreadyOn {
+		t.Errorf("a ready after the start %q", got)
+	}
+	if got := c.press("ready:qold", from(clk, chat, "u_carol")); got != quizOver {
+		t.Errorf("a ready under an older quiz %q", got)
+	}
+	c.quiz("end", from(clk, chat, alice))
+	if got := c.press("ready:"+id, from(clk, chat, "u_carol")); got != quizOver {
+		t.Errorf("a ready once over %q", got)
+	}
+}
+
+// ✋ Ready racing the countdown's end, or the starter's ▶️ Start, starts
+// the quiz once, and a join it makes before the start is a player.
+func TestPressReadyRaces(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	release()
+	asked := func(room string) int {
+		c.s.mu.Lock()
+		defer c.s.mu.Unlock()
+		n := 0
+		for _, op := range c.s.srv.Outbox() {
+			if op.Op.Chat == room && strings.HasPrefix(op.Op.Text, "**Question 1 of 3**") {
+				n++
+			}
+		}
+		return n
+	}
+	for i := range 10 {
+		room := fmt.Sprintf("c_ready%d", i)
+		model.add(asJSON(capital, peak, planet))
+		c.quiz("3 20s", from(clk, room, alice))
+		waitPrepared(t, c, room)
+		id := quizID(t, c, room)
+		c.press("ready:"+id, from(clk, room, alice))
+		c.press("ready:"+id, from(clk, room, bob))
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				clk.Advance(lobbyWait)
+			} else {
+				c.s.press(&addon.Context{Chat: room, Sender: alice, Group: true}, "start:"+id)
+			}
+		}()
+		got := c.press("ready:"+id, from(clk, room, "u_carol"))
+		wg.Wait()
+		c.s.mu.Lock()
+		q := c.s.quizzes[room]
+		lobby, carol := q.Lobby, slices.Contains(q.Players, "u_carol")
+		c.s.mu.Unlock()
+		switch got {
+		case "You're in: 3 joined.":
+			if !lobby && !carol {
+				t.Errorf("carol joined, but isn't playing")
+			}
+		case alreadyOn:
+			if carol {
+				t.Errorf("carol playing, but told it had started")
+			}
+		default:
+			t.Errorf("carol's ready %q", got)
+		}
+		if lobby { // carol's join re-armed the countdown: let it run
+			clk.Advance(lobbyWait)
+		}
+		if n := asked(room); n != 1 {
+			t.Errorf("question 1 asked %d times", n)
+		}
+		c.quiz("end", from(clk, room, alice))
+		for len(c.notes) > 0 { // the outbox's notices: not this test's
+			<-c.notes
+		}
 	}
 }

@@ -41,6 +41,8 @@ const (
 	// The lobby's controls, its buttons and /quiz start, wait and end,
 	// which only the starter may use.
 	onlyStarter = "Only the player who started this quiz can do that."
+	joinedN     = "You're in: %d joined."
+	alreadyIn   = "You're already in."
 	starting    = "Starting!"
 	needPlayers = "Waiting for at least 2 players: react to join."
 	whenWritten = "Starting as soon as the questions are written."
@@ -326,21 +328,24 @@ func (s *server) openLobbyLocked(c *addon.Context, topic string, n int, length t
 }
 
 // opening is the answer that starts q: its intro, and the watch for the
-// whole quiz; in a lobby, on a bot that shows buttons, the starter's
-// buttons too. s.mu is held.
+// whole quiz; in a lobby, on a bot that shows buttons, ✋ Ready for
+// everyone and the starter's buttons too. s.mu is held.
 func (s *server) opening(q *quiz) addon.Result {
 	r := addon.Result{
-		Content: addon.Text(clamp(intro(q), maxPost)).Content,
+		Content: addon.Text(clamp(intro(q, q.Lobby && s.srv.Buttons()), maxPost)).Content,
 		Meta: &addon.ResultMeta{Watch: &addon.Watch{
 			ID: q.ID, Replies: true, Reactions: q.Lobby, Until: q.End.Add(watchSlack).Format(time.RFC3339), Tool: "quiz_answer", Over: "That quiz is over. Start another with /quiz.",
 		}},
 	}
 	if q.Lobby && s.srv.Buttons() {
-		r.Meta.Buttons = [][]addon.Button{{
-			{Label: "▶️ Start", Data: "start:" + q.ID},
-			{Label: "✖️ Cancel", Data: "cancel:" + q.ID},
-			{Label: "⏱ +30s", Data: "wait:" + q.ID},
-		}}
+		r.Meta.Buttons = [][]addon.Button{
+			{{Label: "✋ Ready", Data: "ready:" + q.ID}},
+			{
+				{Label: "▶️ Start", Data: "start:" + q.ID},
+				{Label: "✖️ Cancel", Data: "cancel:" + q.ID},
+				{Label: "⏱ +30s", Data: "wait:" + q.ID},
+			},
+		}
 		r.Meta.OnPress = "quiz_press"
 	}
 	return r
@@ -429,16 +434,21 @@ func (s *server) prepare(ctx context.Context, id, chat, topic string, n int) {
 }
 
 // intro is the quiz's first lines: its topic, its length, and how to
-// answer.
-func intro(q *quiz) string {
+// answer; a lobby's, how to join: by ✋ Ready where buttons show, else
+// by reacting.
+func intro(q *quiz, buttons bool) string {
 	title := "🧠 **Quiz**"
 	if q.Topic != "" {
 		title = "🧠 **Quiz: " + q.Topic + "**"
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby {
-		return fmt.Sprintf("%s · %d %s, %s each.\n👋 **React to this message with any emoji to join**, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.\n%sA question ends as soon as everyone who joined has answered.",
-			title, size(q), plural(size(q), "question", "questions"), lengthLabel(q.Time), how)
+		join := "👋 **React to this message with any emoji to join**"
+		if buttons {
+			join = "👋 **Press ✋ Ready to join**"
+		}
+		return fmt.Sprintf("%s · %d %s, %s each.\n%s, whoever started it too: the quiz starts 30 seconds after the last player joins, once at least 2 have.\n%sA question ends as soon as everyone who joined has answered.",
+			title, size(q), plural(size(q), "question", "questions"), lengthLabel(q.Time), join, how)
 	}
 	return fmt.Sprintf("%s · %d %s, %s each.\n%sFrom question 2 on, a question ends as soon as everyone who answered question 1 has answered.",
 		title, len(q.Questions), plural(len(q.Questions), "question", "questions"), lengthLabel(q.Time), how)
@@ -805,18 +815,30 @@ func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 	in := slices.Contains(q.Joined, c.Sender)
 	switch {
 	case !removed && !in:
-		q.Joined = append(q.Joined, c.Sender)
-		q.LastJoin = s.clock.Now()
+		s.joinLocked(q, c.Sender)
 	case removed && in:
 		q.Joined = slices.DeleteFunc(q.Joined, func(u string) bool { return u == c.Sender })
+		s.armLobby(q)
 	default:
 		s.mu.Unlock()
 		return addon.Text("Noted.")
 	}
-	s.armLobby(q)
 	s.mu.Unlock()
 	s.save()
 	return addon.Text("Noted.")
+}
+
+// joinLocked adds u to q's lobby, if not in it yet, as its last join,
+// re-arming the lobby's timer, and reports whether u was added: a join by
+// reaction or by ✋ Ready alike. The caller saves. s.mu is held.
+func (s *server) joinLocked(q *quiz, u string) bool {
+	if slices.Contains(q.Joined, u) {
+		return false
+	}
+	q.Joined = append(q.Joined, u)
+	q.LastJoin = s.clock.Now()
+	s.armLobby(q)
+	return true
 }
 
 // armLobby sets q's lobby timer: with enough players, to start at
@@ -894,7 +916,8 @@ func (s *server) press(c *addon.Context, data string) string {
 	return s.control(c, action, id)
 }
 
-// control is one of the starter's lobby controls, start, cancel or wait,
+// control is ✋ Ready, anyone's join, or one of the starter's lobby
+// controls, start, cancel or wait,
 // from a button pressed under the quiz id, or typed, with id "". It
 // returns what to tell the player: a press's pop-up, or a command's
 // answer. Its work is all in memory, its posts queued, so a press answers
@@ -915,6 +938,14 @@ func (s *server) control(c *addon.Context, action, id string) string {
 	case !q.Lobby:
 		s.mu.Unlock()
 		return alreadyOn
+	case action == "ready": // anyone's, the starter's too
+		text := alreadyIn
+		if s.joinLocked(q, c.Sender) {
+			text = fmt.Sprintf(joinedN, len(q.Joined))
+		}
+		s.mu.Unlock()
+		s.save()
+		return text
 	case q.Starter != c.Sender:
 		s.mu.Unlock()
 		return onlyStarter

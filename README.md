@@ -18,15 +18,18 @@ the players and keeps a 7-day scoreboard.
 
 ## How to play
 
-- **Joining.** In a group, react to the quiz's intro with any emoji to
-  join. Whoever starts it must react too. It needs at least 2 players.
+- **Joining.** In a group, press ✋ Ready under the quiz's intro (on
+  Telegram and other chats with buttons), or react to the intro with any
+  emoji (Signal; reactions count everywhere). Whoever starts it must join
+  too. It needs at least 2 players.
   It starts 30 seconds after the last one joins, and is called off if
   fewer than 2 have joined after 15 minutes. The questions are written
   while you join; if you're all in first, the bot says "🧠 Writing the
   questions…" and starts once they're ready. On Telegram the bot sees
   reactions only as a group admin.
 - **The starter's buttons.** Where the chat has buttons (not Signal), the
-  intro has three, for the player who started the quiz only: ▶️ Start
+  intro has ✋ Ready for everyone, and under it three for the player who
+  started the quiz only: ▶️ Start
   (start now, with 2 or more joined; pressing it counts as joining),
   ✖️ Cancel (call it off) and ⏱ +30s (start 30 seconds later, as often as
   you like, up to the 15-minute limit). On Signal, type `/quiz start`,
