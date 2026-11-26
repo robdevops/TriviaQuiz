@@ -70,18 +70,20 @@ counts the cost against the chat's `DAILY_BUDGET`.
   `/quiz wait` answers that there's no countdown.
 - **The lobby's buttons.** Where the bot shows buttons (not on Signal),
   the intro has one row, with no other words or emoji: `✅ N` (Ready),
-  anyone's, with how many joined; the starter's setting, `Rounds: N`; ▶️
-  (Start), once 2 have joined (it goes again if they drop below 2); and ✖️
-  (Cancel). The intro then says to press ✅ to join, that the starter
-  presses ▶️ when everyone's in (✖️ calls it off) and can change the
-  number of rounds first, and leaves the number of
-  questions to the button; each question's time is the command's (or
-  `QUIZ_TIME`'s), with no button. The setting has two modes: what the
-  quiz was started with (the default or the command's) and double that,
-  up to the game's limit of 10; a press switches between them, its pop-up
-  the new value ("Rounds: 10"), and one started at the limit answers
-  "Already the most.". More questions than are written are written in the
-  background, and fewer just plays the first ones; it can't change once
+  anyone's, with how many joined; the starter's two settings, `Rounds: N`
+  and `Interval: Ns` (each question's time, always in whole seconds, as
+  `Interval: 70s`); ▶️ (Start), once 2 have joined (it goes again if they
+  drop below 2); and ✖️ (Cancel). The intro then says to press ✅ to join,
+  that the starter presses ▶️ when everyone's in (✖️ calls it off) and
+  can change the number of rounds and the interval first, and leaves the
+  number of questions and their time to the buttons. Each setting has two
+  modes: what the quiz was started with (the defaults, `QUIZ_TIME`'s
+  included, or the command's) and double that, up to the game's limit
+  (10 rounds, 120 seconds); a press switches between them, its pop-up the
+  new value ("Rounds: 10", "Interval: 70s"), and one started at the limit
+  answers "Already the most.". More questions than are written are
+  written in the background, and fewer just plays the first ones; a
+  setting can't change once
   ▶️ is waiting for the questions. Every join, leave or setting
   replaces the row under the intro. Anyone else pressing one of the
   starter's gets "Only the player who started this quiz can do that.",
@@ -291,20 +293,18 @@ The quiz adds:
   watch's tool) and `quiz_press` (`{press}`, the lobby's buttons'
   `onPress`), all for the bot alone, so none is offered to the model.
 - In a group's lobby, on a bot whose capability says `buttons`, the intro's
-  result carries one row of at most 4 buttons: ✅ N (Ready), data
+  result carries one row of at most 5 buttons: ✅ N (Ready), data
   `ready:<id>`, for anyone, then the starter's `t1:<id>` (`Rounds: N`),
+  `t2:<id>` (`Interval: Ns`, the answer time in seconds),
   `start:<id>` (▶️, once 2 have joined) and
   `cancel:<id>` (✖️), with `onPress: "quiz_press"`. ✅ joins the presser
   (`_meta` sender) as a reaction does. Each join, leave or setting queues
   an outbox op `{op: "buttons", chat, watch: <id>, buttons}` with the
   new row, replacing the buttons under the intro and keeping its text.
-  `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.";
-  `t2:<id>`, from an older lobby's Answer timer, changes nothing: it
-  answers with the time ("Answer timer: 35s") and replaces
-  the row with the current one, without it.
+  `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.".
   Such a lobby has no countdown, and remembers that across a restart. Its
   watch runs to 15 minutes, plus 2 for writing more questions, plus the
-  quiz at the larger number of questions. A press is all in memory, its
+  quiz at the larger settings. A press is all in memory, its
   posts and ops queued in the outbox, so it answers at once with the
   pop-up; the lobby's timer and a press take the same lock, so the quiz starts once.
 - `/quiz` checks that the bot offered `sampling` and, in the extension's

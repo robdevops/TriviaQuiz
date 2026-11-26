@@ -53,7 +53,7 @@ const (
 	lobbyOff    = "The quiz is off."
 	alreadyOn   = "That quiz has already started."
 	quizOver    = "That quiz is over."
-	// A lobby with buttons has no countdown, and its starter's toggle.
+	// A lobby with buttons has no countdown, and its starter's toggles.
 	noCountdown = "There's no countdown: whoever started the quiz presses ▶️ when everyone's in."
 	atMost      = "Already the most."
 	notEnough   = "Not enough players joined, so the quiz is off."
@@ -323,11 +323,11 @@ func (s *server) openLobbyLocked(c *addon.Context, topic string, n int, length t
 		Lobby: true, CallOff: now.Add(lobbyMax),
 	}
 	if s.srv.Buttons() {
-		// The watch covers the toggle's larger setting, and a top-up of
+		// The watch covers the toggles' larger settings, and a top-up of
 		// the questions begun as late as the lobby's end.
-		q.Buttons, q.BaseWant = true, n
-		mn := max(n, doubled(n, maxQuestions))
-		q.End = now.Add(lobbyMax + s.prep + time.Duration(mn)*(length+settle) + time.Duration(mn-1)*s.gap)
+		q.Buttons, q.BaseWant, q.BaseTime = true, n, length
+		mn, ml := max(n, doubled(n, maxQuestions)), max(length, doubled(length, maxTime))
+		q.End = now.Add(lobbyMax + s.prep + time.Duration(mn)*(ml+settle) + time.Duration(mn-1)*s.gap)
 	}
 	s.quizzes[c.Chat] = q
 	s.armLobby(q)
@@ -351,7 +351,7 @@ func (s *server) prepareLocked(q *quiz, n int) {
 	go s.prepare(pctx, s.prepGen, q.ID, q.Chat, q.Topic, n)
 }
 
-// doubled is the toggle's second mode: twice v, up to most.
+// doubled is a toggle's second mode: twice v, up to most.
 func doubled[T int | time.Duration](v, most T) T {
 	return min(2*v, most)
 }
@@ -374,14 +374,15 @@ func (s *server) opening(q *quiz) addon.Result {
 }
 
 // lobbyRows are the buttons under q's lobby intro, all in one row: ✅,
-// Ready, with how many joined, for anyone; the starter's toggle of the
-// number of rounds (questions), showing it; ▶️, Start, once minPlayers
-// have joined; and ✖️, Cancel. The answer time is the command's or the
-// setting's.
+// Ready, with how many joined, for anyone; the starter's two toggles,
+// the number of rounds (questions) and the interval (each one's answer
+// time, in seconds), showing them; ▶️, Start, once minPlayers have
+// joined; and ✖️, Cancel.
 func lobbyRows(q *quiz) [][]addon.Button {
 	row := []addon.Button{
 		{Label: fmt.Sprintf("✅ %d", len(q.Joined)), Data: "ready:" + q.ID},
 		{Label: fmt.Sprintf("Rounds: %d", q.Want), Data: "t1:" + q.ID},
+		{Label: intervalLabel(q.Time), Data: "t2:" + q.ID},
 	}
 	if len(q.Joined) >= minPlayers {
 		row = append(row, addon.Button{Label: "▶️", Data: "start:" + q.ID})
@@ -503,7 +504,7 @@ func intro(q *quiz, buttons bool) string {
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby && buttons { // the buttons show its settings, which the starter may change
-		return fmt.Sprintf("%s\n👋 **Press ✅ to join**, whoever started it too. The starter can change the number of rounds with its button, and presses ▶️ when everyone's in (it shows once at least 2 have joined; ✖️ calls it off).\n%sA question ends as soon as everyone who joined has answered.",
+		return fmt.Sprintf("%s\n👋 **Press ✅ to join**, whoever started it too. The starter can change the number of rounds and the interval (each question's time) with the buttons, and presses ▶️ when everyone's in (it shows once at least 2 have joined; ✖️ calls it off).\n%sA question ends as soon as everyone who joined has answered.",
 			title, how)
 	}
 	if q.Lobby {
@@ -529,6 +530,12 @@ func questionText(q *quiz) string {
 		b.WriteString("\n↩️ Reply to this message with your answer.")
 	}
 	return b.String()
+}
+
+// intervalLabel is the Interval toggle's label and pop-up: each
+// question's time, always in whole seconds, as "Interval: 70s".
+func intervalLabel(d time.Duration) string {
+	return fmt.Sprintf("Interval: %ds", int(d.Round(time.Second)/time.Second))
 }
 
 // lengthLabel is a question's time as players see it: 30s, 2 min, 1m30s.
@@ -1002,7 +1009,7 @@ func (s *server) press(c *addon.Context, data string) string {
 }
 
 // control is ✅ (Ready), anyone's join, or one of the starter's lobby
-// controls, start, cancel, wait or the toggle t1,
+// controls, start, cancel, wait or a toggle (t1, t2),
 // from a button pressed under the quiz id, or typed, with id "". It
 // returns what to tell the player: a press's pop-up, or a command's
 // answer. Its work is all in memory, its posts queued, so a press answers
@@ -1044,19 +1051,12 @@ func (s *server) control(c *addon.Context, action, id string) string {
 		text = cancelled
 	case "wait":
 		text = s.waitLocked(q)
-	case "t1":
+	case "t1", "t2":
 		if !q.Buttons || id == "" {
 			s.mu.Unlock()
 			return quizOver
 		}
-		text = s.toggleLocked(q)
-	case "t2": // an older lobby's Answer timer: it changes nothing, and the row loses it
-		if !q.Buttons || id == "" {
-			s.mu.Unlock()
-			return quizOver
-		}
-		s.showLocked(q)
-		text = "Answer timer: " + lengthLabel(q.Time)
+		text = s.toggleLocked(q, action)
 	default:
 		s.mu.Unlock()
 		return quizOver
@@ -1121,33 +1121,53 @@ func (s *server) waitLocked(q *quiz) string {
 	return later
 }
 
-// toggleLocked is the starter's press of q's toggle, t1, its number of
-// questions: it switches between what the lobby opened with and double
-// that, up to the limit; one already at the limit stays. More questions
-// than are written are written now, in the background. It returns the
-// pop-up. s.mu is held.
-func (s *server) toggleLocked(q *quiz) string {
+// toggleLocked is the starter's press of one of q's toggles: t1, its
+// number of questions (Rounds), or t2, each one's time (Interval). Each
+// switches between what the lobby opened with and double that, up to the
+// limit; one already at the limit stays. More questions than are written
+// are written now, in the background. It returns the pop-up. s.mu is
+// held.
+func (s *server) toggleLocked(q *quiz, which string) string {
 	if q.Waiting {
 		return whenWritten
 	}
-	alt := doubled(q.BaseWant, maxQuestions)
-	if alt <= q.BaseWant {
-		return atMost
+	want, length := q.Want, q.Time
+	var text string
+	if which == "t1" {
+		alt := doubled(q.BaseWant, maxQuestions)
+		if alt <= q.BaseWant {
+			return atMost
+		}
+		want = alt
+		if q.Want != q.BaseWant {
+			want = q.BaseWant
+		}
+		text = fmt.Sprintf("Rounds: %d", want)
+	} else {
+		base := q.BaseTime
+		if base == 0 { // a lobby saved before the Interval toggle came back
+			base = q.Time
+		}
+		alt := doubled(base, maxTime)
+		if alt <= base {
+			return atMost
+		}
+		length = alt
+		if q.Time != base {
+			length = base
+		}
+		text = intervalLabel(length)
 	}
-	want := alt
-	if q.Want != q.BaseWant {
-		want = q.BaseWant
-	}
-	if time.Duration(want)*(q.Time+settle) > maxQuiz {
+	if time.Duration(want)*(length+settle) > maxQuiz {
 		return longQuiz
 	}
-	q.Want = want
+	q.Want, q.Time = want, length
 	if !q.Preparing && len(q.Questions) < q.Want {
 		s.prepareLocked(q, q.Want-len(q.Questions))
 	}
 	s.enoughLocked(q)
 	s.showLocked(q)
-	return fmt.Sprintf("Rounds: %d", want)
+	return text
 }
 
 // enoughLocked stops writing more of q's questions once it has as many as

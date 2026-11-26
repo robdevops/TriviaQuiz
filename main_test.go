@@ -2327,8 +2327,9 @@ func lastRow(t *testing.T, c *client, cursor, id string) ([]string, string) {
 }
 
 // The lobby's answer has one row of buttons, on a bot that shows buttons,
-// in a group: ✅ (Ready) with its count, the toggle of the number of
-// questions (no answer timer) and ✖️ (Cancel); its
+// in a group: ✅ (Ready) with its count, the toggles of the number of
+// rounds and of the interval (each question's time, in seconds) and ✖️
+// (Cancel); its
 // texts say to press, not to react. None in a DM, or on a bot without
 // them, where the texts stay as they were.
 func TestLobbyButtons(t *testing.T) {
@@ -2341,18 +2342,19 @@ func TestLobbyButtons(t *testing.T) {
 	want := [][]addon.Button{{
 		{Label: "✅ 0", Data: "ready:" + id},
 		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "Interval: 20s", Data: "t2:" + id},
 		{Label: "✖️", Data: "cancel:" + id},
 	}}
 	if r.Meta == nil || r.Meta.Watch == nil || !reflect.DeepEqual(r.Meta.Buttons, want) || r.Meta.OnPress != "quiz_press" {
 		t.Fatalf("lobby answer %+v", r.Meta)
 	}
-	// The watch covers the toggle's larger setting, after the lobby and a
+	// The watch covers the toggles' larger settings, after the lobby and a
 	// top-up of the questions.
-	if until := began.Add(lobbyMax + prepMax + 6*(20*time.Second+settle) + watchSlack).Format(time.RFC3339); r.Meta.Watch.Until != until {
+	if until := began.Add(lobbyMax + prepMax + 6*(40*time.Second+settle) + watchSlack).Format(time.RFC3339); r.Meta.Watch.Until != until {
 		t.Errorf("until %s, want %s", r.Meta.Watch.Until, until)
 	}
 	got := words(r)
-	for _, s := range []string{"👋 **Press ✅ to join**, whoever started it too", "presses ▶️ when everyone's in", "✖️ calls it off", "change the number of rounds with its button"} {
+	for _, s := range []string{"👋 **Press ✅ to join**, whoever started it too", "presses ▶️ when everyone's in", "✖️ calls it off", "change the number of rounds and the interval (each question's time) with the buttons"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("intro with buttons lacks %q: %q", s, got)
 		}
@@ -2401,6 +2403,7 @@ func TestPressReady(t *testing.T) {
 	one := [][]addon.Button{{
 		{Label: "✅ 1", Data: "ready:" + id},
 		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "Interval: 60s", Data: "t2:" + id},
 		{Label: "✖️", Data: "cancel:" + id},
 	}}
 	if len(p.Ops) != 1 || p.Ops[0].Op != "buttons" || p.Ops[0].Chat != chat || p.Ops[0].Watch != id || !reflect.DeepEqual(p.Ops[0].Buttons, one) {
@@ -2418,6 +2421,7 @@ func TestPressReady(t *testing.T) {
 	two := [][]addon.Button{{
 		{Label: "✅ 2", Data: "ready:" + id},
 		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "Interval: 60s", Data: "t2:" + id},
 		{Label: "▶️", Data: "start:" + id},
 		{Label: "✖️", Data: "cancel:" + id},
 	}}
@@ -2427,13 +2431,13 @@ func TestPressReady(t *testing.T) {
 	}
 	c.react(true, from(clk, chat, bob)) // bob takes his back: he leaves, and Start goes
 	l, cursor := lastRow(t, c, p.Cursor, id)
-	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
+	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "Interval: 60s", "✖️"}) {
 		t.Errorf("after a leave %v", l)
 	}
 	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 joined." {
 		t.Errorf("bob's ready again %q", got)
 	}
-	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "▶️", "✖️"}) {
+	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "Interval: 60s", "▶️", "✖️"}) {
 		t.Errorf("back at 2 %v", l)
 	}
 	clk.Advance(5 * lobbyWait) // no countdown
@@ -2485,14 +2489,14 @@ func TestPressStart(t *testing.T) {
 		t.Errorf("a start alone %q", got)
 	}
 	l, cursor := lastRow(t, c, "0", id) // the start was alice's join
-	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
+	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "Interval: 60s", "✖️"}) {
 		t.Errorf("after alice's start %v", l)
 	}
 	if got := words(c.quiz("wait", from(clk, chat, alice))); got != noCountdown {
 		t.Errorf("/quiz wait %q", got)
 	}
 	c.react(false, from(clk, chat, bob))
-	if l, _ := lastRow(t, c, cursor, id); len(l) != 4 || l[2] != "▶️" {
+	if l, _ := lastRow(t, c, cursor, id); len(l) != 5 || l[3] != "▶️" {
 		t.Errorf("at 2 %v", l)
 	}
 	clk.Advance(lobbyWait)
@@ -2564,10 +2568,9 @@ func TestButtonsNoCountdown(t *testing.T) {
 	}
 }
 
-// The toggle is the starter's: it flips between what the lobby opened
-// with and double that; the game that starts uses it, its extra
-// questions written in the background. A t2 press, an older lobby's
-// Answer timer, changes nothing but the row, which loses it.
+// The toggles are the starter's: each flips between what the lobby opened
+// with and double that; the game that starts uses them, its extra
+// questions written in the background. Interval is always in seconds.
 func TestToggles(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet), asJSON(landing, element, gold))
@@ -2584,14 +2587,16 @@ func TestToggles(t *testing.T) {
 	cursor := "0"
 	for _, step := range []struct{ data, popup, label string }{
 		{"t1:", "Rounds: 6", "Rounds: 6"},
-		{"t2:", "Answer timer: 20s", "Rounds: 6"},
+		{"t2:", "Interval: 40s", "Interval: 40s"},
+		{"t2:", "Interval: 20s", "Interval: 20s"},
+		{"t2:", "Interval: 40s", "Interval: 40s"},
 	} {
 		if got := c.press(step.data+id, from(clk, chat, alice)); got != step.popup {
 			t.Errorf("%s: %q, want %q", step.data, got, step.popup)
 		}
 		var l []string
 		l, cursor = lastRow(t, c, cursor, id)
-		if !slices.Contains(l, step.label) || len(l) != 3 {
+		if !slices.Contains(l, step.label) || len(l) != 4 {
 			t.Errorf("after %s %q: %v", step.data, step.popup, l)
 		}
 	}
@@ -2606,11 +2611,11 @@ func TestToggles(t *testing.T) {
 		t.Fatalf("the start %q", got)
 	}
 	page := waitPosts(t, c, "0", 1)
-	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 6** · easy · 20s\n") {
+	if len(page.Ops) != 1 || !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 6** · easy · 40s\n") {
 		t.Fatalf("question 1 %+v", page.Ops)
 	}
 	c.s.mu.Lock()
-	if q := c.s.quizzes[chat]; len(q.Questions) != 6 || q.Time != 20*time.Second || !q.Deadline.Equal(clk.Now().Add(20*time.Second)) {
+	if q := c.s.quizzes[chat]; len(q.Questions) != 6 || q.Time != 40*time.Second || !q.Deadline.Equal(clk.Now().Add(40*time.Second)) {
 		t.Errorf("quiz %+v", q)
 	}
 	c.s.mu.Unlock()
@@ -2660,16 +2665,24 @@ func TestToggleCaps(t *testing.T) {
 	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 10" {
 		t.Errorf("t1 %q", got)
 	}
+	if got := c.press("t2:"+id, from(clk, chat, alice)); got != "Interval: 120s" {
+		t.Errorf("t2 %q", got)
+	}
+	if got := c.press("t2:"+id, from(clk, chat, alice)); got != "Interval: 70s" {
+		t.Errorf("t2 back %q", got)
+	}
 	c.quiz("end", from(clk, chat, alice))
 
 	r := c.quiz("10 2m", from(clk, "c_max", alice))
 	maxID := quizID(t, c, "c_max")
-	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 10", "✖️"}) {
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 10", "Interval: 120s", "✖️"}) {
 		t.Errorf("at the limits %v", l)
 	}
 	before := len(c.outbox("0").Ops)
-	if got := c.press("t1:"+maxID, from(clk, "c_max", alice)); got != atMost {
-		t.Errorf("t1 at the limit %q", got)
+	for _, data := range []string{"t1:" + maxID, "t2:" + maxID} {
+		if got := c.press(data, from(clk, "c_max", alice)); got != atMost {
+			t.Errorf("%s at the limit %q", data, got)
+		}
 	}
 	if after := len(c.outbox("0").Ops); after != before {
 		t.Errorf("ops from a toggle at the limit: %d, want %d", after, before)
@@ -2678,11 +2691,14 @@ func TestToggleCaps(t *testing.T) {
 
 	r = c.quiz("", from(clk, "c_default", alice))
 	defID := quizID(t, c, "c_default")
-	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 5", "✖️"}) {
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 5", "Interval: 35s", "✖️"}) {
 		t.Errorf("the defaults %v", l)
 	}
 	if got := c.press("t1:"+defID, from(clk, "c_default", alice)); got != "Rounds: 10" {
 		t.Errorf("the default doubled %q", got)
+	}
+	if got := c.press("t2:"+defID, from(clk, "c_default", alice)); got != "Interval: 70s" {
+		t.Errorf("the default interval doubled %q", got)
 	}
 	c.quiz("end", from(clk, "c_default", alice))
 }

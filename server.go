@@ -86,11 +86,13 @@ type quiz struct {
 	Extra     time.Duration     `json:"extra,omitempty"`     // the starter's extra wait on top of lobbyWait, from /quiz wait or ⏱ +30s
 	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers; with buttons, unless started
 	// Buttons marks a lobby on a bot that shows buttons: one row, ✅ (Ready)
-	// and the starter's toggle, ▶️ (Start) and ✖️ (Cancel), and no countdown:
-	// only the starter starts it. BaseWant is what it opened with, the
-	// toggle's first mode; the second doubles it, up to the limit.
+	// and the starter's toggles (Rounds, Interval), ▶️ (Start) and ✖️
+	// (Cancel), and no countdown: only the starter starts it. BaseWant and
+	// BaseTime are what it opened with, each toggle's first mode; the
+	// second doubles it, up to the limit.
 	Buttons  bool           `json:"buttons,omitempty"`
 	BaseWant int            `json:"baseWant,omitempty"`
+	BaseTime time.Duration  `json:"baseTime,omitempty"`
 	Seq      int            `json:"seq"`    // the answers recorded so far, to break ties
 	Points   map[string]int `json:"points"` // by player
 	Right    map[string]int `json:"right"`  // questions right, by player
