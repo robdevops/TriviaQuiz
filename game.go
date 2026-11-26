@@ -45,7 +45,7 @@ const (
 	alreadyIn   = "You're already in."
 	starting    = "Starting!"
 	needPlayers = "Waiting for at least 2 players: react to join."
-	needReady   = "Waiting for at least 2 players: press ✋ Ready to join."
+	needReady   = "Waiting for at least 2 players: press ✅ to join."
 	whenWritten = "Starting as soon as the questions are written."
 	later       = "Starts 30s later."
 	noLater     = "Can't wait any longer."
@@ -54,10 +54,10 @@ const (
 	alreadyOn   = "That quiz has already started."
 	quizOver    = "That quiz is over."
 	// A lobby with buttons has no countdown, and its starter's toggle.
-	noCountdown = "There's no countdown: whoever started the quiz presses ▶️ Start once everyone's in."
+	noCountdown = "There's no countdown: whoever started the quiz presses ▶️ when everyone's in."
 	atMost      = "Already the most."
 	notEnough   = "Not enough players joined, so the quiz is off."
-	notStarted  = "Nobody pressed ▶️ Start, so the quiz is off."
+	notStarted  = "Nobody pressed ▶️, so the quiz is off."
 )
 
 // usage is the help for /quiz.
@@ -214,7 +214,7 @@ func startsWithDigit(s string) bool { return s != "" && s[0] >= '0' && s[0] <= '
 // busy is the answer to /quiz while a quiz is on, or waits in its lobby.
 func busy(q *quiz) addon.Result {
 	if q.Lobby && q.Buttons {
-		return addon.Text("A quiz is waiting for players: press ✋ Ready under its message to join.")
+		return addon.Text("A quiz is waiting for players: press ✅ under its message to join.")
 	}
 	if q.Lobby {
 		return addon.Text("A quiz is waiting for players: react to its message to join, or /quiz start.")
@@ -373,19 +373,20 @@ func (s *server) opening(q *quiz) addon.Result {
 	return r
 }
 
-// lobbyRows are the buttons under q's lobby intro, all in one row: ✋
-// Ready with how many joined, for anyone; the starter's toggle of the
-// number of questions, showing it; ▶️ Start, once minPlayers have joined;
-// and ✖️ Cancel. The answer time is the command's or the setting's.
+// lobbyRows are the buttons under q's lobby intro, all in one row: ✅,
+// Ready, with how many joined, for anyone; the starter's toggle of the
+// number of rounds (questions), showing it; ▶️, Start, once minPlayers
+// have joined; and ✖️, Cancel. The answer time is the command's or the
+// setting's.
 func lobbyRows(q *quiz) [][]addon.Button {
 	row := []addon.Button{
-		{Label: fmt.Sprintf("✋ Ready: %d", len(q.Joined)), Data: "ready:" + q.ID},
-		{Label: fmt.Sprintf("Questions: %d", q.Want), Data: "t1:" + q.ID},
+		{Label: fmt.Sprintf("✅ %d", len(q.Joined)), Data: "ready:" + q.ID},
+		{Label: fmt.Sprintf("Rounds: %d", q.Want), Data: "t1:" + q.ID},
 	}
 	if len(q.Joined) >= minPlayers {
-		row = append(row, addon.Button{Label: "▶️ Start", Data: "start:" + q.ID})
+		row = append(row, addon.Button{Label: "▶️", Data: "start:" + q.ID})
 	}
-	row = append(row, addon.Button{Label: "✖️ Cancel", Data: "cancel:" + q.ID})
+	row = append(row, addon.Button{Label: "✖️", Data: "cancel:" + q.ID})
 	return [][]addon.Button{row}
 }
 
@@ -493,7 +494,7 @@ func (s *server) prepare(ctx context.Context, gen int, id, chat, topic string, n
 }
 
 // intro is the quiz's first lines: its topic, its length, and how to
-// answer; a lobby's, how to join: by ✋ Ready where buttons show, else
+// answer; a lobby's, how to join: by ✅ (Ready) where buttons show, else
 // by reacting.
 func intro(q *quiz, buttons bool) string {
 	title := "🧠 **Quiz**"
@@ -502,7 +503,7 @@ func intro(q *quiz, buttons bool) string {
 	}
 	how := "Answer by **replying** to the quiz's messages: the letter for a multiple-choice question, or the answer itself. Your last answer before time is up counts: edit it, or reply again, to change it. "
 	if q.Lobby && buttons { // the buttons show its settings, which the starter may change
-		return fmt.Sprintf("%s\n👋 **Press ✋ Ready to join**, whoever started it too. Whoever started it can change the number of questions with its button, and presses ▶️ Start once everyone's in (it shows once at least 2 have joined).\n%sA question ends as soon as everyone who joined has answered.",
+		return fmt.Sprintf("%s\n👋 **Press ✅ to join**, whoever started it too. The starter can change the number of rounds with its button, and presses ▶️ when everyone's in (it shows once at least 2 have joined; ✖️ calls it off).\n%sA question ends as soon as everyone who joined has answered.",
 			title, how)
 	}
 	if q.Lobby {
@@ -909,7 +910,7 @@ func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 
 // joinLocked adds u to q's lobby, if not in it yet, as its last join,
 // re-arming the lobby's timer, and reports whether u was added: a join by
-// reaction or by ✋ Ready alike. The caller saves. s.mu is held.
+// reaction or by ✅ (Ready) alike. The caller saves. s.mu is held.
 func (s *server) joinLocked(q *quiz, u string) bool {
 	if slices.Contains(q.Joined, u) {
 		return false
@@ -1000,7 +1001,7 @@ func (s *server) press(c *addon.Context, data string) string {
 	return s.control(c, action, id)
 }
 
-// control is ✋ Ready, anyone's join, or one of the starter's lobby
+// control is ✅ (Ready), anyone's join, or one of the starter's lobby
 // controls, start, cancel, wait or the toggle t1,
 // from a button pressed under the quiz id, or typed, with id "". It
 // returns what to tell the player: a press's pop-up, or a command's
@@ -1146,7 +1147,7 @@ func (s *server) toggleLocked(q *quiz) string {
 	}
 	s.enoughLocked(q)
 	s.showLocked(q)
-	return fmt.Sprintf("Questions: %d", want)
+	return fmt.Sprintf("Rounds: %d", want)
 }
 
 // enoughLocked stops writing more of q's questions once it has as many as

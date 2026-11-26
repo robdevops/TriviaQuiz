@@ -85,8 +85,8 @@ type quiz struct {
 	LastJoin  time.Time         `json:"lastJoin,omitempty"`  // when the last player joined: the quiz starts lobbyWait after
 	Extra     time.Duration     `json:"extra,omitempty"`     // the starter's extra wait on top of lobbyWait, from /quiz wait or ⏱ +30s
 	CallOff   time.Time         `json:"callOff,omitempty"`   // when the lobby gives up with fewer than minPlayers; with buttons, unless started
-	// Buttons marks a lobby on a bot that shows buttons: one row, ✋ Ready
-	// and the starter's toggle, ▶️ Start and ✖️ Cancel, and no countdown:
+	// Buttons marks a lobby on a bot that shows buttons: one row, ✅ (Ready)
+	// and the starter's toggle, ▶️ (Start) and ✖️ (Cancel), and no countdown:
 	// only the starter starts it. BaseWant is what it opened with, the
 	// toggle's first mode; the second doubles it, up to the limit.
 	Buttons  bool           `json:"buttons,omitempty"`

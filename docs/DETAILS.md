@@ -38,15 +38,15 @@ counts the cost against the chat's `DAILY_BUDGET`.
   ⏰), unless it has already ended (everyone answered, or `/quiz end`).
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave), or, where the
-  bot shows buttons, press ✋ Ready under it, which the intro then asks for
+  bot shows buttons, press ✅ (Ready) under it, which the intro then asks for
   instead ("You're in: 2 joined.", or "You're already in."; reactions still
-  count). Ready and a reaction are the same join, one per player. Whoever
+  count). ✅ and a reaction are the same join, one per player. Whoever
   starts it must join too. Without buttons it starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
   called off if fewer than 2 have joined after 15 minutes ("Not enough
   players joined, so the quiz is off."). With buttons there is no
   countdown: only the starter starts it, and it is called off after 15
-  minutes all the same (with 2 or more joined, "Nobody pressed ▶️ Start, so
+  minutes all the same (with 2 or more joined, "Nobody pressed ▶️, so
   the quiz is off."). Those who joined
   are the players every question waits for; anyone may still answer. The
   intro comes at once, and the model writes the questions while players
@@ -59,35 +59,36 @@ counts the cost against the chat's `DAILY_BUDGET`.
   the bot sees reactions only as the group's admin. In a DM there is no
   lobby: the questions are written first, then the quiz starts at once.
 - **The starter's controls.** In a lobby, the player who started the quiz
-  can start it now (`/quiz start`, or ▶️ Start), which counts as their join
+  can start it now (`/quiz start`, or ▶️), which counts as their join
   and needs 2 joined ("Waiting for at least 2 players: react to join.", or
-  "press ✋ Ready to join." where the bot shows buttons), and goes exactly
+  "press ✅ to join." where the bot shows buttons), and goes exactly
   as when the countdown runs out (waiting for the questions if they aren't
-  written yet); call it off (`/quiz stop` or `end`, or ✖️ Cancel, which
+  written yet); call it off (`/quiz stop` or `end`, or ✖️, which
   posts "The quiz is off."); or, without buttons, put the start off by 30
   seconds (`/quiz wait`), as often as they like, for later countdowns too,
   up to the 15-minute limit ("Can't wait any longer."). With buttons,
   `/quiz wait` answers that there's no countdown.
 - **The lobby's buttons.** Where the bot shows buttons (not on Signal),
-  the intro has one row: `✋ Ready: N`, anyone's, with how many joined;
-  the starter's setting, `Questions: N`; ▶️ Start, once 2 have joined (it
-  goes again if they drop below 2); and ✖️ Cancel. The intro then says to
-  press ✋ Ready, that the starter presses ▶️ Start once everyone's in and
-  can change the number of questions first, and leaves the number of
+  the intro has one row, with no other words or emoji: `✅ N` (Ready),
+  anyone's, with how many joined; the starter's setting, `Rounds: N`; ▶️
+  (Start), once 2 have joined (it goes again if they drop below 2); and ✖️
+  (Cancel). The intro then says to press ✅ to join, that the starter
+  presses ▶️ when everyone's in (✖️ calls it off) and can change the
+  number of rounds first, and leaves the number of
   questions to the button; each question's time is the command's (or
   `QUIZ_TIME`'s), with no button. The setting has two modes: what the
   quiz was started with (the default or the command's) and double that,
   up to the game's limit of 10; a press switches between them, its pop-up
-  the new value ("Questions: 10"), and one started at the limit answers
+  the new value ("Rounds: 10"), and one started at the limit answers
   "Already the most.". More questions than are written are written in the
   background, and fewer just plays the first ones; it can't change once
-  ▶️ Start is waiting for the questions. Every join, leave or setting
+  ▶️ is waiting for the questions. Every join, leave or setting
   replaces the row under the intro. Anyone else pressing one of the
   starter's gets "Only the player who started this quiz can do that.",
-  and a press once the lobby is over, ✋ Ready's too, gets "That quiz has
+  and a press once the lobby is over, ✅'s too, gets "That quiz has
   already started." or "That quiz is over.". A second `/quiz` in the
   lobby gets "A quiz is waiting for players: react to its message to
-  join, or /quiz start." (with buttons: "press ✋ Ready under its message
+  join, or /quiz start." (with buttons: "press ✅ under its message
   to join.")
 - **A pause to read the answer.** When a question ends, its answer comes as
   a reply to it, and the next question 10 seconds later, with its full time.
@@ -290,10 +291,10 @@ The quiz adds:
   watch's tool) and `quiz_press` (`{press}`, the lobby's buttons'
   `onPress`), all for the bot alone, so none is offered to the model.
 - In a group's lobby, on a bot whose capability says `buttons`, the intro's
-  result carries one row of at most 4 buttons: ✋ Ready, data
-  `ready:<id>`, for anyone, then the starter's `t1:<id>` (questions),
-  `start:<id>` (once 2 have joined) and
-  `cancel:<id>`, with `onPress: "quiz_press"`. Ready joins the presser
+  result carries one row of at most 4 buttons: ✅ N (Ready), data
+  `ready:<id>`, for anyone, then the starter's `t1:<id>` (`Rounds: N`),
+  `start:<id>` (▶️, once 2 have joined) and
+  `cancel:<id>` (✖️), with `onPress: "quiz_press"`. ✅ joins the presser
   (`_meta` sender) as a reaction does. Each join, leave or setting queues
   an outbox op `{op: "buttons", chat, watch: <id>, buttons}` with the
   new row, replacing the buttons under the intro and keeping its text.

@@ -2327,8 +2327,8 @@ func lastRow(t *testing.T, c *client, cursor, id string) ([]string, string) {
 }
 
 // The lobby's answer has one row of buttons, on a bot that shows buttons,
-// in a group: ✋ Ready with its count, the toggle of the number of
-// questions (no answer timer) and ✖️ Cancel; its
+// in a group: ✅ (Ready) with its count, the toggle of the number of
+// questions (no answer timer) and ✖️ (Cancel); its
 // texts say to press, not to react. None in a DM, or on a bot without
 // them, where the texts stay as they were.
 func TestLobbyButtons(t *testing.T) {
@@ -2339,9 +2339,9 @@ func TestLobbyButtons(t *testing.T) {
 	r := c.quiz("3 20s", from(clk, chat, alice))
 	id := quizID(t, c, chat)
 	want := [][]addon.Button{{
-		{Label: "✋ Ready: 0", Data: "ready:" + id},
-		{Label: "Questions: 3", Data: "t1:" + id},
-		{Label: "✖️ Cancel", Data: "cancel:" + id},
+		{Label: "✅ 0", Data: "ready:" + id},
+		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "✖️", Data: "cancel:" + id},
 	}}
 	if r.Meta == nil || r.Meta.Watch == nil || !reflect.DeepEqual(r.Meta.Buttons, want) || r.Meta.OnPress != "quiz_press" {
 		t.Fatalf("lobby answer %+v", r.Meta)
@@ -2352,7 +2352,7 @@ func TestLobbyButtons(t *testing.T) {
 		t.Errorf("until %s, want %s", r.Meta.Watch.Until, until)
 	}
 	got := words(r)
-	for _, s := range []string{"👋 **Press ✋ Ready to join**, whoever started it too", "presses ▶️ Start once everyone's in", "change the number of questions with its button"} {
+	for _, s := range []string{"👋 **Press ✅ to join**, whoever started it too", "presses ▶️ when everyone's in", "✖️ calls it off", "change the number of rounds with its button"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("intro with buttons lacks %q: %q", s, got)
 		}
@@ -2360,7 +2360,7 @@ func TestLobbyButtons(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "react") || strings.Contains(got, "30 seconds") {
 		t.Errorf("intro with buttons %q", got)
 	}
-	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is waiting for players: press ✋ Ready under its message to join." {
+	if got := words(c.quiz("", from(clk, chat, bob))); got != "A quiz is waiting for players: press ✅ under its message to join." {
 		t.Errorf("a second /quiz in the lobby: %q", got)
 	}
 	waitPrepared(t, c, chat)
@@ -2384,8 +2384,8 @@ func TestLobbyButtons(t *testing.T) {
 	waitPrepared(t, c, chat)
 }
 
-// Every join and leave, by ✋ Ready or by reaction, replaces the row with
-// the new count, under the lobby's own answer; ▶️ Start shows from 2
+// Every join and leave, by ✅ (Ready) or by reaction, replaces the row with
+// the new count, under the lobby's own answer; ▶️ (Start) shows from 2
 // joined, and goes again below 2.
 func TestPressReady(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
@@ -2399,9 +2399,9 @@ func TestPressReady(t *testing.T) {
 	}
 	p := waitOps(t, c, "0", 1)
 	one := [][]addon.Button{{
-		{Label: "✋ Ready: 1", Data: "ready:" + id},
-		{Label: "Questions: 3", Data: "t1:" + id},
-		{Label: "✖️ Cancel", Data: "cancel:" + id},
+		{Label: "✅ 1", Data: "ready:" + id},
+		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "✖️", Data: "cancel:" + id},
 	}}
 	if len(p.Ops) != 1 || p.Ops[0].Op != "buttons" || p.Ops[0].Chat != chat || p.Ops[0].Watch != id || !reflect.DeepEqual(p.Ops[0].Buttons, one) {
 		t.Fatalf("buttons op %+v", p.Ops)
@@ -2416,10 +2416,10 @@ func TestPressReady(t *testing.T) {
 	}
 	c.react(false, from(clk, chat, alice)) // a reaction is a join too
 	two := [][]addon.Button{{
-		{Label: "✋ Ready: 2", Data: "ready:" + id},
-		{Label: "Questions: 3", Data: "t1:" + id},
-		{Label: "▶️ Start", Data: "start:" + id},
-		{Label: "✖️ Cancel", Data: "cancel:" + id},
+		{Label: "✅ 2", Data: "ready:" + id},
+		{Label: "Rounds: 3", Data: "t1:" + id},
+		{Label: "▶️", Data: "start:" + id},
+		{Label: "✖️", Data: "cancel:" + id},
 	}}
 	p = waitOps(t, c, cursor, 1)
 	if len(p.Ops) != 1 || !reflect.DeepEqual(p.Ops[0].Buttons, two) || p.Ops[0].Watch != id {
@@ -2427,13 +2427,13 @@ func TestPressReady(t *testing.T) {
 	}
 	c.react(true, from(clk, chat, bob)) // bob takes his back: he leaves, and Start goes
 	l, cursor := lastRow(t, c, p.Cursor, id)
-	if !slices.Equal(l, []string{"✋ Ready: 1", "Questions: 3", "✖️ Cancel"}) {
+	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
 		t.Errorf("after a leave %v", l)
 	}
 	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 joined." {
 		t.Errorf("bob's ready again %q", got)
 	}
-	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✋ Ready: 2", "Questions: 3", "▶️ Start", "✖️ Cancel"}) {
+	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "▶️", "✖️"}) {
 		t.Errorf("back at 2 %v", l)
 	}
 	clk.Advance(5 * lobbyWait) // no countdown
@@ -2469,8 +2469,8 @@ func TestPressReady(t *testing.T) {
 	}
 }
 
-// ▶️ Start is the starter's alone; it counts as their join, and starts
-// the quiz at once; typed with fewer than 2, it says to press ✋ Ready.
+// ▶️ (Start) is the starter's alone; it counts as their join, and starts
+// the quiz at once; typed with fewer than 2, it says to press ✅ (Ready).
 func TestPressStart(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet))
@@ -2485,14 +2485,14 @@ func TestPressStart(t *testing.T) {
 		t.Errorf("a start alone %q", got)
 	}
 	l, cursor := lastRow(t, c, "0", id) // the start was alice's join
-	if !slices.Equal(l, []string{"✋ Ready: 1", "Questions: 3", "✖️ Cancel"}) {
+	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
 		t.Errorf("after alice's start %v", l)
 	}
 	if got := words(c.quiz("wait", from(clk, chat, alice))); got != noCountdown {
 		t.Errorf("/quiz wait %q", got)
 	}
 	c.react(false, from(clk, chat, bob))
-	if l, _ := lastRow(t, c, cursor, id); len(l) != 4 || l[2] != "▶️ Start" {
+	if l, _ := lastRow(t, c, cursor, id); len(l) != 4 || l[2] != "▶️" {
 		t.Errorf("at 2 %v", l)
 	}
 	clk.Advance(lobbyWait)
@@ -2521,7 +2521,7 @@ func TestPressStart(t *testing.T) {
 	}
 }
 
-// With buttons there is no countdown: the lobby waits for ▶️ Start, and is
+// With buttons there is no countdown: the lobby waits for ▶️ (Start), and is
 // called off at lobbyMax all the same, with enough players or without,
 // across a restart too.
 func TestButtonsNoCountdown(t *testing.T) {
@@ -2583,8 +2583,8 @@ func TestToggles(t *testing.T) {
 	}
 	cursor := "0"
 	for _, step := range []struct{ data, popup, label string }{
-		{"t1:", "Questions: 6", "Questions: 6"},
-		{"t2:", "Answer timer: 20s", "Questions: 6"},
+		{"t1:", "Rounds: 6", "Rounds: 6"},
+		{"t2:", "Answer timer: 20s", "Rounds: 6"},
 	} {
 		if got := c.press(step.data+id, from(clk, chat, alice)); got != step.popup {
 			t.Errorf("%s: %q, want %q", step.data, got, step.popup)
@@ -2628,14 +2628,14 @@ func TestToggleBack(t *testing.T) {
 	model.mu.Lock()
 	model.hang = true
 	model.mu.Unlock()
-	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 6" {
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 6" {
 		t.Fatalf("t1 %q", got)
 	}
 	waitFor(t, "the top-up's request", func() bool { return len(model.sent()) == 2 })
 	if !preparing(c, chat) {
 		t.Fatal("not writing more")
 	}
-	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 3" {
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 3" {
 		t.Fatalf("t1 back %q", got)
 	}
 	if preparing(c, chat) {
@@ -2657,14 +2657,14 @@ func TestToggleCaps(t *testing.T) {
 	clk, c, _, _ := buttonBegin(t, true) // the questions are still being written throughout
 	c.quiz("8 1m10s", from(clk, chat, alice))
 	id := quizID(t, c, chat)
-	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Questions: 10" {
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 10" {
 		t.Errorf("t1 %q", got)
 	}
 	c.quiz("end", from(clk, chat, alice))
 
 	r := c.quiz("10 2m", from(clk, "c_max", alice))
 	maxID := quizID(t, c, "c_max")
-	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✋ Ready: 0", "Questions: 10", "✖️ Cancel"}) {
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 10", "✖️"}) {
 		t.Errorf("at the limits %v", l)
 	}
 	before := len(c.outbox("0").Ops)
@@ -2678,16 +2678,16 @@ func TestToggleCaps(t *testing.T) {
 
 	r = c.quiz("", from(clk, "c_default", alice))
 	defID := quizID(t, c, "c_default")
-	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✋ Ready: 0", "Questions: 5", "✖️ Cancel"}) {
+	if l := labels(t, r.Meta.Buttons); !slices.Equal(l, []string{"✅ 0", "Rounds: 5", "✖️"}) {
 		t.Errorf("the defaults %v", l)
 	}
-	if got := c.press("t1:"+defID, from(clk, "c_default", alice)); got != "Questions: 10" {
+	if got := c.press("t1:"+defID, from(clk, "c_default", alice)); got != "Rounds: 10" {
 		t.Errorf("the default doubled %q", got)
 	}
 	c.quiz("end", from(clk, "c_default", alice))
 }
 
-// ▶️ Start while the questions are being written waits for them.
+// ▶️ (Start) while the questions are being written waits for them.
 func TestPressStartWhilePreparing(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet))
@@ -2747,7 +2747,7 @@ func TestTypedStart(t *testing.T) {
 	}
 }
 
-// ✖️ Cancel is the starter's alone, and calls the lobby off as /quiz end
+// ✖️ (Cancel) is the starter's alone, and calls the lobby off as /quiz end
 // does, saying so in the chat.
 func TestPressCancel(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
@@ -2886,7 +2886,7 @@ func TestPressRacesTimer(t *testing.T) {
 	}
 }
 
-// ✋ Ready racing the starter's ▶️ Start starts the quiz once, and a join
+// ✅ (Ready) racing the starter's ▶️ (Start) starts the quiz once, and a join
 // it makes before the start is a player.
 func TestPressReadyRaces(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
