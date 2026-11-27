@@ -436,6 +436,9 @@ func from(clk clock, chat, user string) callContext {
 // tool calls a tool as the bot does, with the message's context in _meta.
 func (c *client) tool(name string, args map[string]string, ctx callContext) toolResult {
 	c.t.Helper()
+	if ctx.Network == "" { // a bot on one network: its chats show buttons if it does
+		ctx.Buttons = c.s.srv.Buttons()
+	}
 	var r toolResult
 	c.result("tools/call", map[string]any{
 		"name": name, "arguments": args,
@@ -2958,5 +2961,17 @@ func TestPressReadyRaces(t *testing.T) {
 		for len(c.notes) > 0 { // the outbox's notices: not this test's
 			<-c.notes
 		}
+	}
+}
+
+// On a bot on two networks whose Telegram shows buttons, a Signal group's
+// lobby is one for reactions: its chat shows none.
+func TestNoButtonsChat(t *testing.T) {
+	clk, c, _, _ := buttonBegin(t, true)
+	ctx := from(clk, chat, alice)
+	ctx.Network, ctx.Buttons = "signal", false
+	r := c.quiz("", ctx)
+	if r.Meta == nil || r.Meta.Buttons != nil || r.Meta.OnPress != "" || !r.Meta.Watch.Reactions || !strings.Contains(words(r), "React to this message") {
+		t.Fatalf("a Signal lobby: %q, %+v", words(r), r.Meta)
 	}
 }

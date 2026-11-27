@@ -322,7 +322,7 @@ func (s *server) openLobbyLocked(c *addon.Context, topic string, n int, length t
 		Answers: map[string]answer{}, Points: map[string]int{}, Right: map[string]int{},
 		Lobby: true, CallOff: now.Add(lobbyMax),
 	}
-	if s.srv.Buttons() {
+	if c.Buttons {
 		// The watch covers the toggle's larger setting, and a top-up of
 		// the questions begun as late as the lobby's end.
 		q.Buttons, q.BaseWant = true, n
