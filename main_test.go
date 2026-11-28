@@ -973,6 +973,16 @@ func TestShuffle(t *testing.T) {
 
 // The checks each question must pass.
 func TestCheck(t *testing.T) {
+	// An answer the question only contains inside a longer word, or one too
+	// short to tell, isn't given away.
+	for _, tc := range []struct {
+		q, a string
+		want bool
+	}{{"Which city is home to the Chengdu panda base?", "Chengdu", true}, {"What did the Parisians call it?", "Paris", false}, {"Is it on?", "On", false}, {"In which year, 1969, did it land?", "1969", true}} {
+		if got := givesAway(tc.q, tc.a); got != tc.want {
+			t.Errorf("givesAway(%q, %q) = %v", tc.q, tc.a, got)
+		}
+	}
 	s := testServer(t, t.TempDir(), &fakeClock{}, io.Discard)
 	long := strings.Repeat("x", 301)
 	for _, tc := range []struct {
@@ -988,6 +998,8 @@ func TestCheck(t *testing.T) {
 		{textQ("None?", "easy"), "has no accepted answers"},
 		{textQ("Blank?", "easy", " ", "the"), "has no accepted answers"},
 		{textQ("Where?", "easy", "Paris", "https://example.com/paris"), "has a link"},
+		{choiceQ("Which city is home to the Chengdu Research Base of Giant Panda Breeding?", "medium", 3, "Guiyang", "Chongqing", "Kunming", "Chengdu"), "names its answer in the question"},
+		{textQ("Who wrote the novel known as Tolstoy's War and Peace?", "easy", "Leo Tolstoy", "Tolstoy"), "names its answer in the question"},
 		{map[string]any{"q": "Kind?", "kind": "essay", "difficulty": "easy", "explanation": "x"}, `has a kind that is neither "choice" nor "text"`},
 		{map[string]any{"q": "Answer?", "kind": "choice", "difficulty": "easy", "choices": []string{"a1", "b1", "c1", "d1"}, "answer": "B", "explanation": "x"}, "isn't an object in the form asked for"},
 		{map[string]any{"q": "Missing?", "kind": "choice", "difficulty": "easy", "choices": []string{"a1", "b1", "c1", "d1"}, "explanation": "x"}, "has an answer that isn't among its choices"},

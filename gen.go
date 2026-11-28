@@ -72,6 +72,7 @@ Each question is an object with these keys:
 
 Rules:
 - Every question has exactly one defensible answer. No opinions or rankings ("which is the best…"), no trick wording, nothing ambiguous.
+- Never name the answer, or any of its accepted forms, in the question, not even in a name that contains it (asking for a city, don't mention a landmark named after that city).
 - In a choice question all four choices are the same kind of thing, the kind the question asks for: asked for a material, four materials; a year, four years; a composer, four composers. A choice of another kind (an invention, a process or a place when the question asks for a material) gives the answer away, so never use one. Each wrong choice is one a player who half-knows the subject could believe, but definitely wrong.
 - Ask only about facts that can't have changed since your training: no records, nothing "current", "latest" or "most recent", no recent events, no living person's age, title or team. You can't check facts, so leave out anything you aren't sure of.
 - Every question has an explanation that says why its answer is right; players see it with the answer.
@@ -292,6 +293,21 @@ func parseQuestions(reply string) ([]json.RawMessage, error) {
 	return items, nil
 }
 
+// givesAway reports whether question names answer: its words, normalised,
+// as a run of whole words in the question's, a possessive counting as its
+// word. An answer of under 3 characters is too short to tell.
+func givesAway(question, answer string) bool {
+	a := normalize(answer)
+	if utf8.RuneCountInString(a) < 3 {
+		return false
+	}
+	q := possessive.Replace(question) // "Tolstoy's" names Tolstoy
+	return strings.Contains(" "+normalize(q)+" ", " "+a+" ")
+}
+
+// possessive drops a possessive 's, which normalize would join to its word.
+var possessive = strings.NewReplacer("'s", "", "’s", "")
+
 // check reads one question as the model wrote it, cleaned and with its
 // choices shuffled, or says what is wrong with it, as the follow-up
 // names it after "question 3 ".
@@ -342,6 +358,9 @@ func (s *server) check(raw json.RawMessage) (question, string) {
 			return question{}, "has an answer that isn't among its choices"
 		}
 		q.Answer = *r.Answer
+		if givesAway(q.Q, q.Choices[q.Answer]) {
+			return question{}, "names its answer in the question"
+		}
 		s.shuffle(&q)
 	case "text":
 		for _, a := range r.Answers {
@@ -357,6 +376,9 @@ func (s *server) check(raw json.RawMessage) (question, string) {
 		}
 		if len(q.Answers) == 0 {
 			return question{}, "has no accepted answers"
+		}
+		if slices.ContainsFunc(q.Answers, func(a string) bool { return givesAway(q.Q, a) }) {
+			return question{}, "names its answer in the question"
 		}
 	default:
 		return question{}, `has a kind that is neither "choice" nor "text"`
