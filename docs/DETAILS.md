@@ -27,7 +27,12 @@ counts the cost against the chat's `DAILY_BUDGET`.
 - **Free text:** reply with the answer. Case, accents, punctuation and
   "a", "an" and "the" don't matter, and a small slip is forgiven: one letter
   in an answer of 5 to 9 letters, two in one of 10 or more. Numbers must be
-  exact.
+  exact. When the question ends, the bot's model marks the answers the
+  quiz didn't accept, as a friendly host would: a misspelling, a phonetic
+  spelling or another name for the same thing (such as "Shakesphere" or
+  "Chomolungma") counts. It can only make a wrong answer right, never the
+  reverse. If it fails or takes over 20 seconds, the quiz's own marks
+  stand.
 - **Your last answer before time is up counts.** To change it, edit your
   reply, or reply again (deleting the old one first if you like: a deleted
   reply that isn't replaced still counts, as the bot doesn't tell addons of
@@ -112,7 +117,9 @@ counts the cost against the chat's `DAILY_BUDGET`.
   memory only, so a restart forgets it.
 - **Points:** 5 for an easy question, 10 for a medium one, 15 for a hard
   one, and 5 more for the first right answer (marked ⚡). The model is asked
-  for medium questions unless `QUIZ_DIFFICULTY` says otherwise.
+  for medium questions unless `QUIZ_DIFFICULTY` says otherwise. An answer
+  the model accepts counts as any other: the ⚡ goes to the earliest
+  answer that ends up right.
 
 ## Install notes
 
@@ -158,7 +165,11 @@ which is what gives it the `QUIZ_` settings below:
 add `"dms": true` to play in DMs too. The quiz needs:
 
 - `model`, to have the bot's model write the questions: one request per
-  quiz, and at most 2 more when some questions come back unusable. Keep
+  quiz, and at most 2 more when some questions come back unusable; and to
+  mark text answers: one more request for each text question with an
+  answer the quiz didn't accept. A quiz of 10 questions makes at most 13,
+  so a `per_hour` of 30 allows two full quizzes an hour; over it, answers
+  keep the quiz's own marks. Keep
   `max_tokens` at or above `QUIZ_MAX_TOKENS` (3000 by default); the bot caps
   each answer at it;
 - `post`, for each question, its answer (a reply to the question) and the
@@ -182,7 +193,9 @@ within 2 minutes of their own. The bot takes one sampling request at a
 time from an addon, so the quiz writes one quiz at a time: a `/quiz` in a
 second chat meanwhile waits for it. A request the quiz gives up on (by
 `/quiz end`, say) frees the bot at once, so the next quiz needn't wait;
-this needs signalbot 7bb1d03 or newer.
+this needs signalbot 7bb1d03 or newer. Marking a question's answers
+takes the same turn: while another chat's quiz is being written, it waits
+at most its 20 seconds, then the quiz's own marks stand.
 
 The quiz keeps its own files in `QUIZ_STATE_DIR`. There's nothing to set
 up: signalbot sets it to `addons/quiz` in its own state directory
@@ -257,12 +270,15 @@ message) and, in a lobby, the reactions to them, each with the chat and
 sender as pseudonyms and the time the bot got it. It never sees a
 phone number, account ID, group ID or, unless `names` is set, a display
 name; it writes players as `{u_…}` and the bot puts their names in.
-Replies are claimed by the bot, so they are never answered, sent to the
-model or kept in the chat's history.
+Replies are claimed by the bot, so they are never answered by it or kept
+in the chat's history.
 
 The topic and the quiz's prompt go to the bot's model, and so to its
-provider, as chat does when someone asks the bot something. Nothing a
-player replies goes to the model: answers are marked by the quiz itself.
+provider, as chat does when someone asks the bot something. Answers are
+marked by the quiz itself; when a text question ends, the answers it
+didn't accept go to the model in one request, with the question and its
+accepted answers, to be marked. They are numbered: no name, pseudonym or
+anything else of who sent them goes with them.
 
 ### What it keeps
 
@@ -270,11 +286,13 @@ player replies goes to the model: answers are marked by the quiz itself.
 
 - open quizzes: the chat's pseudonym, who started it, the topic, the
   questions with their answers and explanations, the open question's
-  deadline, and for each player (a per-chat pseudonym) only whether their
+  deadline, and for each player (a per-chat pseudonym) whether their
   answer to the open question was right and when they sent it, and their
   points so far; who joined its lobby; and the players questions wait for
-  (those who joined, or else who answered question 1). What anyone replied
-  is never kept, in memory or on disk;
+  (those who joined, or else who answered question 1). The text of an
+  answer is kept only for a text question's answer the quiz didn't accept,
+  up to 200 characters, for the model to mark; it goes once the question
+  is revealed. Nothing else anyone replied is kept;
 - 7 days of points per chat, by player pseudonym;
 - 30 days of the questions asked in each chat: a hash of each, to refuse
   repeats, and the question with its answer, so the next quiz's prompt can
@@ -363,7 +381,9 @@ The quiz adds:
 - Ops the bot hasn't read are saved in `quiz.json`, with their IDs, so they
   survive a restart. On start, quizzes still open get their timers back (the
   ⏰ too, if more than 5 seconds are left), and
-  a question whose time passed while the quiz was down is revealed at once;
+  a question whose time passed while the quiz was down is revealed at once,
+  with the quiz's own marks, as is one the model was marking when the quiz
+  stopped;
   the next one gets what is left of the watch, and the quiz ends early if
   too little is. A quiz whose questions were still being written in its
   lobby is called off, with a post saying so, then an `unwatch`: the

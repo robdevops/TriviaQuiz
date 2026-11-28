@@ -25,7 +25,7 @@ type server struct {
 	log   *log.Logger
 	doc   *state.Doc
 	srv   *addon.Server
-	slot  chan struct{} // one quiz written at a time, as the bot takes one sampling request at a time
+	slot  chan struct{} // one sampling request at a time, a quiz's writing or a question's marking, as the bot takes one at a time
 
 	randMu sync.Mutex
 	rand   *mrand.Rand
@@ -40,6 +40,7 @@ type server struct {
 	scores  map[string][]score // by chat, the last scoreDays days
 	asked   map[string][]stamp // by chat, the questions of the last askedDays days
 	prep    time.Duration      // how long a lobby's questions may take to write: prepMax, or less in tests
+	judgeIn time.Duration      // how long the reveal waits for the model's marking: judgeTimeout, or less in tests
 	preps   map[string]prepRun // the writing of a lobby's questions, by quiz
 	prepGen int                // the last prepRun's gen
 	life    context.Context    // the session's, while serve runs: preparation ends with it
@@ -47,7 +48,7 @@ type server struct {
 	// request fails for it, so preparation leaves its quiz as it is.
 	stopping bool
 
-	prepWG sync.WaitGroup // the preparations running
+	prepWG sync.WaitGroup // the preparations and markings running
 	saveMu sync.Mutex     // one save at a time, so the last one written is the newest
 }
 
@@ -59,8 +60,9 @@ type prepRun struct {
 	gen  int
 }
 
-// quiz is one chat's quiz. Its answers are kept only as right or wrong:
-// what anyone replied is never kept.
+// quiz is one chat's quiz. Its answers are kept as right or wrong; only
+// the text of an answer to a text question the code marked wrong is kept,
+// for the model to mark at the reveal, and it goes with the question.
 type quiz struct {
 	ID        string            `json:"id"` // also the watch's
 	Chat      string            `json:"chat"`
@@ -94,6 +96,7 @@ type quiz struct {
 	Seq      int            `json:"seq"`    // the answers recorded so far, to break ties
 	Points   map[string]int `json:"points"` // by player
 	Right    map[string]int `json:"right"`  // questions right, by player
+	judging  bool           // the model is marking the open question's answers
 }
 
 // question is one question as played: its choices already shuffled.
@@ -107,10 +110,12 @@ type question struct {
 	Explanation string   `json:"explanation"`
 }
 
-// answer is whether one player's first answer to the open question was
-// right, and when it was sent.
+// answer is whether one player's answer to the open question was right,
+// and when it was sent; for a text answer the code marked wrong, also what
+// it said, for the model to mark at the reveal.
 type answer struct {
 	Right bool      `json:"right"`
+	Text  string    `json:"text,omitempty"`
 	At    time.Time `json:"at"`
 	Seq   int       `json:"seq"`
 }
@@ -185,6 +190,7 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		gap:     cfg.gap,
 		writing: map[string]bool{},
 		prep:    prepMax,
+		judgeIn: judgeTimeout,
 		preps:   map[string]prepRun{},
 		scores:  map[string][]score{},
 		asked:   map[string][]stamp{},
@@ -260,9 +266,9 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 }
 
 // serve runs the session with the bot on in and out until in ends or
-// ctx does, as s.srv.Run does. Preparation runs in the session's context;
-// once the session is ending, it stops, leaving its quiz as it is, and
-// serve waits for it before returning.
+// ctx does, as s.srv.Run does. Preparation and marking run in the session's context;
+// once the session is ending, they stop, leaving their quiz as it is, and
+// serve waits for them before returning.
 func (s *server) serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	life, end := context.WithCancel(context.Background())
 	s.mu.Lock()

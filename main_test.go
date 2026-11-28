@@ -1441,8 +1441,14 @@ func TestEarlyEnd(t *testing.T) {
 	if r := c.reply("Everest", after); recorded(r) {
 		t.Errorf("an answer after the early end: %+v", r)
 	}
+	model.add(`{"answers":[{"id":1,"right":false}]}`) // the model marks K2 too, at the early end
 	clk.Advance(settle)
-	c.note()
+	waitOps(t, c, page.Cursor, 2)
+	if reqs := model.sent(); len(reqs) != 3 { // 2 to write the quiz, too few the first time, then 1 to mark
+		t.Errorf("%d requests", len(reqs))
+	} else if _, items := judgedItems(t, reqs[2]); !slices.Equal(items, []string{"K2"}) { // marked once, at the early end
+		t.Errorf("judged %q", items)
+	}
 	clk.Advance(50 * time.Second) // past when question 2's ⏰ was due, which it ended too early for, and before question 3's
 	page = c.outbox(page.Cursor)
 	if len(page.Ops) != 2 || !strings.Contains(page.Ops[0].Text, "Everest") || !strings.HasPrefix(page.Ops[1].Text, "**Question 3 of 3**") {

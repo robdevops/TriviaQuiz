@@ -97,7 +97,9 @@ are in [docs/DETAILS.md](docs/DETAILS.md#settings-in-full).
 ## Credits and privacy
 
 The questions come from the bot's own model, through MCP sampling. The
-topic and the quiz's prompt go to the model. Players' answers do not:
-the quiz marks them itself. It never logs names or message text.
+topic and the quiz's prompt go to the model. The quiz marks answers
+itself; a text answer it doesn't accept goes to the model at the reveal,
+to be marked leniently (misspellings, other names for the same thing),
+numbered and without names. It never logs names or message text.
 
 More: [docs/DETAILS.md](docs/DETAILS.md)
