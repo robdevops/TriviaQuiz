@@ -218,7 +218,13 @@ func newServer(cfg config, clk clock, rnd *mrand.Rand, logger *log.Logger) (*ser
 		}
 		s.quizzes[q.Chat] = q
 		if q.Preparing && len(q.Questions) > 0 { // more were being written: it plays those it has
-			q.Preparing, q.Waiting = false, false
+			s.toppedUpLocked(q)
+			waiting := q.Waiting
+			s.writtenLocked(q) // one that was ready starts now
+			if !waiting {
+				s.armLobby(q)
+			}
+			continue
 		}
 		if q.Preparing { // its questions were being written: they are lost
 			s.callOffLocked(q, restarted)

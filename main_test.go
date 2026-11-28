@@ -2668,6 +2668,84 @@ func TestToggleBack(t *testing.T) {
 	}
 }
 
+// A top-up that fails plays the questions written, and the lobby goes
+// back to showing that number.
+func TestTopUpFails(t *testing.T) {
+	clk, c, model, release := buttonBegin(t, true)
+	model.add(asJSON(capital, peak, planet))
+	release()
+	c.quiz("3 20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	model.mu.Lock()
+	model.refuse = true
+	model.mu.Unlock()
+	cursor := c.outbox("0").Cursor
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 6" {
+		t.Fatalf("t1 %q", got)
+	}
+	waitFor(t, "the top-up's request", func() bool { return len(model.sent()) == 2 })
+	waitPrepared(t, c, chat)
+	p := waitOps(t, c, cursor, 2)
+	o := p.Ops[len(p.Ops)-1]
+	if o.Op != "buttons" || !strings.HasPrefix(o.Text, "🧠 **Quiz** · 3 questions, 20s each.\n") {
+		t.Fatalf("after the failed top-up %+v", o)
+	}
+	if l := labels(t, o.Buttons); !slices.Contains(l, "Rounds: 3") {
+		t.Errorf("after the failed top-up %v", l)
+	}
+	c.press("ready:"+id, from(clk, chat, bob))
+	if got := c.press("start:"+id, from(clk, chat, alice)); got != starting {
+		t.Fatalf("the start %q", got)
+	}
+	page := waitPosts(t, c, "0", 1)
+	if !strings.HasPrefix(page.Ops[0].Text, "**Question 1 of 3** · easy · 20s\n") {
+		t.Fatalf("question 1 %+v", page.Ops)
+	}
+}
+
+// A restart while a ready lobby waits for a top-up starts it with the
+// questions written, even once CallOff has passed.
+func TestRestartWhileToppingUp(t *testing.T) {
+	clk := &fakeClock{now: time.Date(2026, 11, 20, 14, 0, 0, 0, time.UTC)}
+	dir := t.TempDir()
+	var logs syncBuffer
+	model := &fakeModel{}
+	model.add(asJSON(capital, peak, planet))
+	c := connect(t, testServer(t, dir, clk, &logs), model)
+	c.initializeCaps(true, true, true, true)
+	c.quiz("3 20s", from(clk, chat, alice))
+	waitPrepared(t, c, chat)
+	id := quizID(t, c, chat)
+	c.press("ready:"+id, from(clk, chat, bob))
+	model.mu.Lock()
+	model.hang = true
+	model.mu.Unlock()
+	if got := c.press("t1:"+id, from(clk, chat, alice)); got != "Rounds: 6" {
+		t.Fatalf("t1 %q", got)
+	}
+	waitFor(t, "the top-up's request", func() bool { return len(model.sent()) == 2 })
+	if got := c.press("start:"+id, from(clk, chat, alice)); got != whenWritten {
+		t.Fatalf("the start %q", got)
+	}
+	cursor := c.outbox("0").Cursor
+	c.close()
+
+	clk = &fakeClock{now: clk.Now().Add(lobbyMax + time.Minute)}
+	c = connect(t, testServer(t, dir, clk, &logs), nil)
+	c.initializeCaps(false, true, true, true)
+	clk.Advance(0)
+	page := waitPosts(t, c, cursor, 1)
+	if !strings.HasPrefix(page.Ops[len(page.Ops)-1].Text, "**Question 1 of 3**") {
+		t.Fatalf("after a restart %+v", page.Ops)
+	}
+	for _, o := range c.outbox(cursor).Ops {
+		if o.Op == "unwatch" || o.Text == notStarted {
+			t.Errorf("after a restart %+v", o)
+		}
+	}
+}
+
 // A toggle doubles up to the game's limit; one opened at the limit stays
 // there, saying so. The defaults come from the settings.
 func TestToggleCaps(t *testing.T) {

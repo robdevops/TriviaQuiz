@@ -484,6 +484,7 @@ func (s *server) prepare(ctx context.Context, gen int, id, chat, topic string, n
 	default:
 		if err != nil {
 			s.log.Printf("quiz %s: writing %d more failed, so it plays the %d it has", id, n, len(q.Questions))
+			s.toppedUpLocked(q)
 		} else {
 			q.Questions = append(q.Questions, qs...)
 			s.remember(chat, qs, s.clock.Now())
@@ -494,15 +495,7 @@ func (s *server) prepare(ctx context.Context, gen int, id, chat, topic string, n
 				break
 			}
 		}
-		q.Preparing = false
-		if q.Waiting { // the lobby was ready: start now, if its players stayed
-			q.Waiting = false
-			if len(q.Joined) >= minPlayers {
-				s.beginLocked(q)
-			} else { // back to waiting for joins, or CallOff
-				s.armLobby(q)
-			}
-		}
+		s.writtenLocked(q)
 	}
 	s.mu.Unlock()
 	s.save()
@@ -1176,6 +1169,34 @@ func (s *server) enoughLocked(q *quiz) {
 		delete(s.preps, q.ID)
 	}
 	q.Preparing = false
+}
+
+// toppedUpLocked has q, whose top-up ended without all it wanted (it
+// failed, or a restart lost it), play the questions it has, and its lobby
+// show that number: what it opened with, if those are written, else as many
+// as are. s.mu is held.
+func (s *server) toppedUpLocked(q *quiz) {
+	if len(q.Questions) >= q.BaseWant {
+		q.Want = q.BaseWant
+	} else {
+		q.Want = len(q.Questions)
+	}
+	s.retextLocked(q)
+}
+
+// writtenLocked is q's questions written: a lobby that was ready starts
+// now, if its players stayed, else goes back to waiting for joins, or
+// CallOff. s.mu is held.
+func (s *server) writtenLocked(q *quiz) {
+	q.Preparing = false
+	if q.Waiting { // the lobby was ready: start now, if its players stayed
+		q.Waiting = false
+		if len(q.Joined) >= minPlayers {
+			s.beginLocked(q)
+		} else { // back to waiting for joins, or CallOff
+			s.armLobby(q)
+		}
+	}
 }
 
 // beginLocked ends q's lobby: its players are those who joined, and

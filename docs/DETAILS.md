@@ -81,7 +81,9 @@ counts the cost against the chat's `DAILY_BUDGET`.
   up to the game's limit of 10; a press switches between them, its pop-up
   the new value ("Rounds: 10"), and one started at the limit answers
   "Already the most.". More questions than are written are written in the
-  background, and fewer just plays the first ones; it can't change once
+  background, and fewer just plays the first ones; if writing more fails,
+  the quiz plays those written, and the setting and the intro go back to
+  that number; it can't change once
   ▶️ is waiting for the questions. Every join, leave or setting
   replaces the row under the intro; a change of the setting rewrites the
   intro too, with the new number of questions ("5 questions" becomes
@@ -361,3 +363,5 @@ The quiz adds:
   too little is. A quiz whose questions were still being written in its
   lobby is called off, with a post saying so, then an `unwatch`: the
   sampling conversation doesn't survive a restart, so it isn't resumed.
+  A lobby that was writing more after a change of its rounds keeps those
+  it has, shows that number, and starts at once if ▶️ was waiting for them.
