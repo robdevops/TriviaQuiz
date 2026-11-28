@@ -871,7 +871,7 @@ func (s *server) answer(c *addon.Context, msg string) addon.Result {
 		}
 		right = choice == qn.Answer
 	} else {
-		right = markText(msg, qn.Answers)
+		right = markText(msg, withoutGiven(qn.Q, qn.Answers))
 	}
 	q.Seq++
 	q.Answers[c.Sender] = answer{Right: right, At: at, Seq: q.Seq}

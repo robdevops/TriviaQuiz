@@ -39,7 +39,10 @@ the players and keeps a 7-day scoreboard.
   send is an answer.
 - **Answering.** In a group, reply to one of the quiz's messages. For
   multiple choice, reply with the letter. For free text, reply with the
-  answer: case and small typos don't matter, numbers must be exact.
+  answer: case and small typos don't matter, numbers must be exact. Words
+  the question already gives can be left out ("Monster" for Monster
+  Beverage when it asks which beverage company), and a compound can be one
+  word or two ("clown fish").
 - **Changing your mind.** Your last answer before time is up counts.
 - **Hurry up.** The bot reacts ⏰ to a question with 5 seconds left (😱
   on Telegram, which doesn't take ⏰ as a reaction).

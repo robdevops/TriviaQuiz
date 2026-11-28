@@ -1059,6 +1059,26 @@ func TestMarking(t *testing.T) {
 			t.Errorf("%q for %q: %v", tc.reply, tc.accepted, got)
 		}
 	}
+	// Words the question already gives may be left out, a compound may be
+	// one word or two, and words that only ask (type, which) aren't given.
+	for _, tc := range []struct {
+		q, reply string
+		accepted []string
+		right    bool
+	}{
+		{"Which beverage company is listed on Nasdaq under the ticker MNST?", "monster", []string{"Monster Beverage"}, true},
+		{"Which beverage company is listed on Nasdaq under the ticker MNST?", "Monster Beverages", []string{"Monster Beverage"}, true},
+		{"What type of fish lives among sea anemones?", "clown", []string{"Clownfish"}, true},
+		{"What type of fish lives among sea anemones?", "clown fish", []string{"Clownfish"}, true},
+		{"What type of fish lives among sea anemones?", "fish", []string{"Clownfish"}, false},
+		{"What type of machine typed letters before computers?", "writer", []string{"Typewriter"}, false},
+		{"Which company makes the iPhone?", "inc", []string{"Apple Inc"}, false},
+		{"Who painted the Mona Lisa?", "Leonardo", []string{"Leonardo da Vinci"}, false},
+	} {
+		if got := markText(tc.reply, withoutGiven(tc.q, tc.accepted)); got != tc.right {
+			t.Errorf("%q for %q to %q: %v", tc.reply, tc.accepted, tc.q, got)
+		}
+	}
 	for reply, want := range map[string]int{"a": 0, "B": 1, " c) ": 2, "(D)": 3, "d.": 3} {
 		if got, ok := letter(reply); !ok || got != want {
 			t.Errorf("%q: %d %v", reply, got, ok)

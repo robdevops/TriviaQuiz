@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -62,7 +63,7 @@ func markText(reply string, accepted []string) bool {
 		if want == "" {
 			continue
 		}
-		if got == want {
+		if got == want || strings.ReplaceAll(got, " ", "") == strings.ReplaceAll(want, " ", "") { // a compound as one word or two: clownfish, clown fish
 			return true
 		}
 		if strings.IndexFunc(want, unicode.IsDigit) >= 0 || strings.IndexFunc(got, unicode.IsDigit) >= 0 {
@@ -129,4 +130,60 @@ func letter(reply string) (int, bool) {
 		return int(c - 'a'), true
 	}
 	return 0, false
+}
+
+// asking are the words of a question that only ask, never name part of
+// the answer.
+var asking = map[string]bool{}
+
+func init() {
+	for _, w := range strings.Fields("what which where when who whom whose why how type kind sort name named called call does did do is are was were this that these those with from into known of in on for by to and or its it") {
+		asking[w] = true
+	}
+}
+
+// withoutGiven is accepted with, for each answer, its form without the
+// words the question already gives, so "Monster" is right for "Monster
+// Beverage" when the question asks which beverage company, and "clown"
+// for "clownfish" when it asks what type of fish. A word counts as given
+// with or without a plural s; a compound loses a given word at its start
+// or end. A form left with under 3 characters, or nothing, isn't added.
+func withoutGiven(question string, accepted []string) []string {
+	given := map[string]bool{}
+	for _, w := range strings.Fields(normalize(question)) {
+		if !asking[w] {
+			given[w], given[strings.TrimSuffix(w, "s")] = true, true
+		}
+	}
+	isGiven := func(w string) bool { return given[w] || given[strings.TrimSuffix(w, "s")] }
+	out := slices.Clone(accepted)
+	add := func(form string) {
+		if utf8.RuneCountInString(strings.ReplaceAll(form, " ", "")) >= 3 && !slices.Contains(out, form) {
+			out = append(out, form)
+		}
+	}
+	for _, a := range accepted {
+		words := strings.Fields(normalize(a))
+		if len(words) > 1 {
+			kept := slices.DeleteFunc(slices.Clone(words), isGiven)
+			if len(kept) > 0 && len(kept) < len(words) {
+				add(strings.Join(kept, " "))
+			}
+			continue
+		}
+		if len(words) == 1 {
+			for g := range given {
+				if len(g) < 3 || g == words[0] {
+					continue
+				}
+				if rest, ok := strings.CutSuffix(words[0], g); ok {
+					add(rest)
+				}
+				if rest, ok := strings.CutPrefix(words[0], g); ok {
+					add(rest)
+				}
+			}
+		}
+	}
+	return out
 }
