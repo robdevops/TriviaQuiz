@@ -39,8 +39,9 @@ counts the cost against the chat's `DAILY_BUDGET`.
 - **Joining.** In a group, the quiz starts with a lobby: react to its intro
   with any emoji to join (take the reaction back to leave), or, where the
   bot shows buttons, press ✅ (Ready) under it, which the intro then asks for
-  instead ("You're in: 2 joined.", or "You're already in."; reactions still
-  count). ✅ and a reaction are the same join, one per player. Whoever
+  instead ("You're in: 2 ready."); pressing ✅ again leaves, as taking a
+  reaction back does ("You're out: 1 ready."), the starter too, and
+  reactions still count. ✅ and a reaction are the same join, one per player. Whoever
   starts it must join too. Without buttons it starts 30 seconds
   after the last player joins, once there are at least 2 of you, and is
   called off if fewer than 2 have joined after 15 minutes ("Not enough
@@ -301,8 +302,9 @@ The quiz adds:
   result carries one row of at most 4 buttons: ✅ N (Ready), data
   `ready:<id>`, for anyone, then the starter's `t1:<id>` (`Rounds: N`),
   `start:<id>` (▶️, once 2 have joined) and
-  `cancel:<id>` (✖️), with `onPress: "quiz_press"`. ✅ joins the presser
-  (`_meta` sender) as a reaction does. Each join, leave or setting queues
+  `cancel:<id>` (✖️), with `onPress: "quiz_press"`. ✅ toggles: it joins the presser
+  (`_meta` sender) as a reaction does, or, if already in, removes them as a
+  reaction taken back does. Each join, leave or setting queues
   an outbox op `{op: "buttons", chat, watch: <id>, buttons}` with the
   new row, replacing the buttons under the intro and keeping its text.
   `wait:<id>`, from an older lobby's ⏱ +30s, answers "That quiz is over.";

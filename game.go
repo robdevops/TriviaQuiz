@@ -41,8 +41,8 @@ const (
 	// The lobby's controls, its buttons and /quiz start, wait and end,
 	// which only the starter may use.
 	onlyStarter = "Only the player who started this quiz can do that."
-	joinedN     = "You're in: %d joined."
-	alreadyIn   = "You're already in."
+	readyIn     = "You're in: %d ready."
+	readyOut    = "You're out: %d ready."
 	starting    = "Starting!"
 	needPlayers = "Waiting for at least 2 players: react to join."
 	needReady   = "Waiting for at least 2 players: press ✅ to join."
@@ -904,9 +904,7 @@ func (s *server) reacted(c *addon.Context, removed bool) addon.Result {
 	case !removed && !in:
 		s.joinLocked(q, c.Sender)
 	case removed && in:
-		q.Joined = slices.DeleteFunc(q.Joined, func(u string) bool { return u == c.Sender })
-		s.armLobby(q)
-		s.showLocked(q)
+		s.leaveLocked(q, c.Sender)
 	default:
 		s.mu.Unlock()
 		return addon.Text("Noted.")
@@ -928,6 +926,16 @@ func (s *server) joinLocked(q *quiz, u string) bool {
 	s.armLobby(q)
 	s.showLocked(q)
 	return true
+}
+
+// leaveLocked takes u out of q's lobby, re-arming the lobby's timer and
+// showing the row with the new count, ▶️ gone below minPlayers: a leave by
+// a reaction taken back or by ✅ (Ready) pressed again alike. The caller
+// saves. s.mu is held.
+func (s *server) leaveLocked(q *quiz, u string) {
+	q.Joined = slices.DeleteFunc(q.Joined, func(v string) bool { return v == u })
+	s.armLobby(q)
+	s.showLocked(q)
 }
 
 // armLobby sets q's lobby timer: with enough players, to start at
@@ -1009,7 +1017,7 @@ func (s *server) press(c *addon.Context, data string) string {
 	return s.control(c, action, id)
 }
 
-// control is ✅ (Ready), anyone's join, or one of the starter's lobby
+// control is ✅ (Ready), anyone's join or leave, or one of the starter's lobby
 // controls, start, cancel, wait or the toggle t1,
 // from a button pressed under the quiz id, or typed, with id "". It
 // returns what to tell the player: a press's pop-up, or a command's
@@ -1031,10 +1039,13 @@ func (s *server) control(c *addon.Context, action, id string) string {
 	case !q.Lobby:
 		s.mu.Unlock()
 		return alreadyOn
-	case action == "ready": // anyone's, the starter's too
-		text := alreadyIn
+	case action == "ready": // anyone's, the starter's too: a toggle
+		var text string
 		if s.joinLocked(q, c.Sender) {
-			text = fmt.Sprintf(joinedN, len(q.Joined))
+			text = fmt.Sprintf(readyIn, len(q.Joined))
+		} else {
+			s.leaveLocked(q, c.Sender)
+			text = fmt.Sprintf(readyOut, len(q.Joined))
 		}
 		s.mu.Unlock()
 		s.save()

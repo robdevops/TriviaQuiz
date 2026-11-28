@@ -2400,8 +2400,8 @@ func TestLobbyButtons(t *testing.T) {
 }
 
 // Every join and leave, by ✅ (Ready) or by reaction, replaces the row with
-// the new count, under the lobby's own answer; ▶️ (Start) shows from 2
-// joined, and goes again below 2.
+// the new count, under the lobby's own answer; ✅ toggles, the starter's
+// too; ▶️ (Start) shows from 2 joined, and goes again below 2.
 func TestPressReady(t *testing.T) {
 	clk, c, model, release := buttonBegin(t, true)
 	model.add(asJSON(capital, peak, planet))
@@ -2409,7 +2409,7 @@ func TestPressReady(t *testing.T) {
 	c.quiz("3 1m", from(clk, chat, alice))
 	waitPrepared(t, c, chat)
 	id := quizID(t, c, chat)
-	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 joined." {
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 ready." {
 		t.Errorf("bob's ready %q", got)
 	}
 	p := waitOps(t, c, "0", 1)
@@ -2422,8 +2422,18 @@ func TestPressReady(t *testing.T) {
 		t.Fatalf("buttons op %+v", p.Ops)
 	}
 	cursor := p.Cursor
-	if got := c.press("ready:"+id, from(clk, chat, bob)); got != alreadyIn {
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're out: 0 ready." {
 		t.Errorf("bob's second ready %q", got)
+	}
+	l, cursor := lastRow(t, c, cursor, id)
+	if !slices.Equal(l, []string{"✅ 0", "Rounds: 3", "✖️"}) {
+		t.Errorf("after an unready %v", l)
+	}
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 1 ready." {
+		t.Errorf("bob's third ready %q", got)
+	}
+	if l, cursor = lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
+		t.Errorf("after a re-ready %v", l)
 	}
 	c.react(false, from(clk, chat, bob)) // a reaction after it changes nothing
 	if p := c.outbox(cursor); len(p.Ops) != 0 {
@@ -2441,15 +2451,36 @@ func TestPressReady(t *testing.T) {
 		t.Fatalf("buttons at 2 %+v", p.Ops)
 	}
 	c.react(true, from(clk, chat, bob)) // bob takes his back: he leaves, and Start goes
-	l, cursor := lastRow(t, c, p.Cursor, id)
+	l, cursor = lastRow(t, c, p.Cursor, id)
 	if !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
 		t.Errorf("after a leave %v", l)
 	}
-	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 joined." {
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 ready." {
 		t.Errorf("bob's ready again %q", got)
 	}
-	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "▶️", "✖️"}) {
+	if l, cursor = lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "▶️", "✖️"}) {
 		t.Errorf("back at 2 %v", l)
+	}
+	// ✅ again is a leave, as a reaction taken back is: Start goes at 1.
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're out: 1 ready." {
+		t.Errorf("bob's unready at 2 %q", got)
+	}
+	if l, cursor = lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 1", "Rounds: 3", "✖️"}) {
+		t.Errorf("after an unready at 2 %v", l)
+	}
+	// The starter may unready too.
+	if got := c.press("ready:"+id, from(clk, chat, alice)); got != "You're out: 0 ready." {
+		t.Errorf("alice's unready %q", got)
+	}
+	if l, cursor = lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 0", "Rounds: 3", "✖️"}) {
+		t.Errorf("after the starter's unready %v", l)
+	}
+	c.press("ready:"+id, from(clk, chat, alice))
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != "You're in: 2 ready." {
+		t.Errorf("bob's ready once more %q", got)
+	}
+	if l, _ := lastRow(t, c, cursor, id); !slices.Equal(l, []string{"✅ 2", "Rounds: 3", "▶️", "✖️"}) {
+		t.Errorf("at 2 once more %v", l)
 	}
 	clk.Advance(5 * lobbyWait) // no countdown
 	if p := posts(c.outbox("0").Ops); len(p) != 0 {
@@ -2471,6 +2502,9 @@ func TestPressReady(t *testing.T) {
 		if got := c.press(data, from(clk, chat, "u_carol")); got != alreadyOn {
 			t.Errorf("%s after the start %q", data, got)
 		}
+	}
+	if got := c.press("ready:"+id, from(clk, chat, bob)); got != alreadyOn { // no unready once started
+		t.Errorf("bob's ready after the start %q", got)
 	}
 	if got := c.press("wait:"+id, from(clk, chat, alice)); got != quizOver {
 		t.Errorf("an old +30s press %q", got)
@@ -3030,7 +3064,7 @@ func TestPressReadyRaces(t *testing.T) {
 		lobby, carol := q.Lobby, slices.Contains(q.Players, "u_carol")
 		c.s.mu.Unlock()
 		switch got {
-		case "You're in: 3 joined.":
+		case "You're in: 3 ready.":
 			if !lobby && !carol {
 				t.Errorf("carol joined, but isn't playing")
 			}
