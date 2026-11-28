@@ -215,7 +215,8 @@ Bad questions are the weak point of LLM trivia, so the prompt sets rules and
 the quiz checks what comes back.
 
 - The system prompt asks for exactly one defensible answer (no opinions,
-  rankings or trick wording, and plausible but definitely wrong choices);
+  rankings or trick wording, and four choices of the same kind as the answer, the
+  wrong ones plausible but definitely wrong);
   nothing that may have changed since the model's training (records,
   "current" anything, recent events), since sampling has no web search to
   check a fact; an explanation for every question, shown with the answer;

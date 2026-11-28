@@ -1326,7 +1326,7 @@ func TestConfig(t *testing.T) {
 		t.Errorf("set %+v %v", c, err)
 	}
 	s := &server{cfg: c}
-	if p := s.systemPrompt(); !strings.Contains(p, "Make every question hard") || !strings.Contains(p, "in Deutsch.") {
+	if p := s.systemPrompt(); !strings.Contains(p, "Make every question hard") || !strings.Contains(p, "in Deutsch.") || !strings.Contains(p, "all four choices are the same kind of thing") {
 		t.Errorf("prompt %q", p)
 	}
 	for _, bad := range [][]string{

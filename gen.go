@@ -71,7 +71,8 @@ Each question is an object with these keys:
 - "explanation": one or two sentences saying why the answer is right.
 
 Rules:
-- Every question has exactly one defensible answer. No opinions or rankings ("which is the best…"), no trick wording, nothing ambiguous. In a choice question the other three choices are plausible but definitely wrong.
+- Every question has exactly one defensible answer. No opinions or rankings ("which is the best…"), no trick wording, nothing ambiguous.
+- In a choice question all four choices are the same kind of thing, the kind the question asks for: asked for a material, four materials; a year, four years; a composer, four composers. A choice of another kind (an invention, a process or a place when the question asks for a material) gives the answer away, so never use one. Each wrong choice is one a player who half-knows the subject could believe, but definitely wrong.
 - Ask only about facts that can't have changed since your training: no records, nothing "current", "latest" or "most recent", no recent events, no living person's age, title or team. You can't check facts, so leave out anything you aren't sure of.
 - Every question has an explanation that says why its answer is right; players see it with the answer.
 - ` + mix + `
